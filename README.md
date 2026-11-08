@@ -79,10 +79,13 @@ flowchart LR
 1. Ask any question in **Ask** → the result card shows a **🔀 session N** badge → click it to open the message
    trace of that question.
 2. Open **Workflows**: production status, live message counts per component, scheduled reports (**▶ Run now**),
-   generated reports and the message trace of every session. (The 2027.1 AI Hub images ship without the
-   Management Portal web server, so the portal includes its own trace viewer. With a web server, the standard
-   Interoperability pages - production configuration, BPL diagram, Visual Trace - work as usual.)
-3. In any result, use **⏰ Schedule report** to create your own subscription (frequency, alert thresholds and an
+   generated reports and the message trace of every session.
+3. Open the standard **IRIS Management Portal** - served by the `webgateway` container, because the AI Hub images
+   ship without a web server - at <http://localhost:52773/csp/sys/UtilHome.csp> (`_SYSTEM` / `SYS`):
+   **Interoperability → Configure → Production** shows `Copilot.Interop.Production` with its 11 components, the BPL
+   of `Copilot.Interop.Process.ReportProcess` opens in the BPL editor, and **Interoperability → View → Messages**
+   opens the Visual Trace of every Ask and Report session.
+4. In any result, use **⏰ Schedule report** to create your own subscription (frequency, alert thresholds and an
    optional webhook).
 
 The demo ships with a **"Daily revenue check"** subscription (alert when revenue today is below $50,000) that runs once
@@ -220,6 +223,9 @@ Go to <http://localhost:8080> and sign in with `_SYSTEM` / `SYS` (demo password 
 | --- | --- |
 | IRIS Data Copilot portal | <http://localhost:8080> |
 | API documentation (OpenAPI) | <http://localhost:8080/api/docs> |
+| IRIS Management Portal (through the Web Gateway container) | <http://localhost:52773/csp/sys/UtilHome.csp> (`_SYSTEM` / `SYS`) |
+| Production configuration | <http://localhost:52773/csp/copilot/EnsPortal.ProductionConfig.zen?PRODUCTION=Copilot.Interop.Production> |
+| Message Viewer / Visual Trace | <http://localhost:52773/csp/copilot/EnsPortal.MessageViewer.zen> |
 | IRIS superserver | `localhost:1972` (namespace `COPILOT`) |
 
 ### 7. Try it
@@ -481,7 +487,8 @@ Change them at run time with `do ##class(Copilot.Core.Config).Set("KEY", "value"
 | `MAX_ROWS` | `1000` | Maximum rows returned per query. |
 | `MAX_SCHEMA_CHARS` | `40000` | Maximum size of the catalog context sent to the LLM. |
 | `SIMULATOR_INTERVAL` | `5` | Seconds between simulated orders (demo only; `0` disables it). |
-| `WEB_PORT` / `IRIS_PORT` / `IRIS_WEB_PORT` | `8080` / `1972` / `52773` | Host ports. |
+| `WEB_PORT` / `IRIS_PORT` / `IRIS_WEB_PORT` | `8080` / `1972` / `52773` | Host ports (portal, superserver, Management Portal through the Web Gateway). |
+| `WEBGATEWAY_IMAGE` | `containers.intersystems.com/intersystems/webgateway:2026.1` | Web Gateway image (public InterSystems registry). |
 | `EXTERNAL_IRIS_HOST` / `EXTERNAL_IRIS_PORT` | `host.docker.internal` / `1972` | IRIS used by `docker-compose.external.yml`. |
 
 ## Languages: English and Portuguese
@@ -522,7 +529,8 @@ To add a language, add a block to `I18N` in `web/static/i18n.js` and a branch in
   OpenAI in your tenant) so not even metadata leaves your infrastructure.
 - LLM keys live only in `.env` (git-ignored) or in IRIS config; they never reach the browser. License keys live in
   `keys/*.key` (git-ignored).
-- This is a local demo: `_SYSTEM/SYS` is the default password of the image. Do not expose the ports on a public
+- This is a local demo: `_SYSTEM/SYS` is the default password of the image, and the Web Gateway connects as
+  `CSPSystem/SYS` (`webgateway/CSP.ini`). Do not expose the ports on a public
   network without changing passwords, restricting roles and putting the portal behind HTTPS.
 
 ## Troubleshooting
@@ -535,6 +543,7 @@ To add a language, add a block to `I18N` in `web/static/i18n.js` and a branch in
 | Answers use the wrong metric or period | Add or adjust the definition in **Catalog → Business glossary**. |
 | Text results in UPPERCASE | IRIS default collation in `GROUP BY`; the prompt asks for `%EXACT(...)`. Ask again or refine. |
 | `docker compose up` fails pulling the IRIS image | The AI Hub image is not on a public registry: `docker load` it and set `IRIS_IMAGE` to the printed tag. |
+| Management Portal (port 52773) does not open | Check `docker logs copilot-webgateway`; the gateway signs in to IRIS as `CSPSystem` (password set by `iris/iris.script` and `webgateway/CSP.ini`). |
 | Port already in use | Change `WEB_PORT` / `IRIS_PORT` / `IRIS_WEB_PORT` in `.env`. |
 
 ## Project structure
@@ -564,6 +573,7 @@ web/
   app/iris_bridge.py      per-user IRIS Native API connection pool
   static/                 index.html, app.js, i18n.js, styles.css
 iris/                     Dockerfile, iris.script, entrypoint.sh, dev-load.sh
+webgateway/               InterSystems Web Gateway config (Management Portal on port 52773)
 keys/                     put your IRIS license key here (git-ignored)
 docker-compose.yml        full stack (IRIS + portal)
 docker-compose.external.yml  portal only, for an existing IRIS instance

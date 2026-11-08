@@ -30,7 +30,6 @@ services:
       - ./keys:/external/keys:ro
     ports:
       - "${IRIS_PORT:-1972}:1972"
-      - "${IRIS_WEB_PORT:-52773}:52773"
     healthcheck:
       test: ["CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/localhost/1972"]
       interval: 10s
@@ -50,6 +49,23 @@ services:
       - IRIS_NAMESPACE=${IRIS_NAMESPACE:-COPILOT}
     ports:
       - "${WEB_PORT:-8080}:8080"
+    depends_on:
+      iris:
+        condition: service_healthy
+
+  # InterSystems Web Gateway: serves the IRIS Management Portal (production configuration,
+  # BPL diagrams, Visual Trace) - the AI Hub images ship without a web server.
+  #   http://localhost:52773/csp/sys/UtilHome.csp
+  webgateway:
+    image: ${WEBGATEWAY_IMAGE:-containers.intersystems.com/intersystems/webgateway:2026.1}
+    container_name: copilot-webgateway
+    environment:
+      - ISC_CSP_CONF_FILE=/webgateway-shared/CSP.conf
+      - ISC_CSP_INI_FILE=/webgateway-shared/CSP.ini
+    volumes:
+      - ./webgateway:/webgateway-shared
+    ports:
+      - "${IRIS_WEB_PORT:-52773}:80"
     depends_on:
       iris:
         condition: service_healthy

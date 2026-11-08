@@ -2,6 +2,8 @@ zn "%SYS"
 do ##class(Security.Users).UnExpireUserPasswords("*")
 set sc = ##class(Security.Users).Get("_SYSTEM",.u) set u("ChangePassword")=0 do ##class(Security.Users).Modify("_SYSTEM",.u)
 do ##class(Security.Services).Get("%Service_Bindings",.s) set s("Enabled")=1 do ##class(Security.Services).Modify("%Service_Bindings",.s)
+kill u set u("Password")="SYS",u("ChangePassword")=0,u("PasswordNeverExpires")=1 do ##class(Security.Users).Modify("CSPSystem",.u)
+do ##class(Security.Services).Get("%Service_WebGateway",.s) set s("Enabled")=1 do ##class(Security.Services).Modify("%Service_WebGateway",.s)
 do ##class(Security.Services).Get("%Service_CallIn",.s) set s("Enabled")=1 do ##class(Security.Services).Modify("%Service_CallIn",.s)
 set dir = "/usr/irissys/mgr/copilot/"
 if '##class(%File).DirectoryExists(dir) do ##class(%File).CreateDirectoryChain(dir)
