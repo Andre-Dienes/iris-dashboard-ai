@@ -170,6 +170,8 @@ ClassMethod SchemaText(schemas As %String = "", withSamples As %Boolean = 1, wit
 {
     Set catalog = ..Catalog(schemas)
     Set max = ##class(Copilot.Core.Config).MaxSchemaChars()
+    // privacy mode: no data values in the context, metadata only
+    Set:##class(Copilot.Core.Config).PrivacyMode() withSamples = 0
     Set out = "", nl = $Char(10)
     If withGlossary {
         // the LLM does not know today's date: without this it guesses the month/year of relative periods

@@ -62,7 +62,25 @@ ClassMethod Run(action As %String, payload As %String = "{}") As %String
             Set out = {"error": (msg), "sqlError": 1}
         }
     } ElseIf action="ask" {
-        Set out = ##class(Copilot.AI.SQLAssistant).Ask(p.%Get("question"), schemas, p.%Get("history"))
+        // through the Interoperability production when it is running; direct call otherwise
+        If ##class(Copilot.Interop.Util).IsRunning() {
+            Set out = ..AskViaProduction(p.%Get("question"), schemas, p.%Get("history"))
+        } Else {
+            Set out = ##class(Copilot.AI.SQLAssistant).Ask(p.%Get("question"), schemas, p.%Get("history"))
+        }
+    } ElseIf $Piece(action, ".")="interop" {
+        Set out = ..Interop($Piece(action, ".", 2), p)
+    } ElseIf $Piece(action, ".")="subscriptions" {
+        Set out = ..Subscriptions($Piece(action, ".", 2), p)
+    } ElseIf action="reports.list" {
+        Set list = [], rs = ##class(%SQL.Statement).%ExecDirect(, "SELECT TOP 100 ID FROM Copilot_Data.Report ORDER BY ID DESC")
+        While rs.%Next() {
+            Do list.%Push(##class(Copilot.Data.Report).%OpenId(rs.%Get("ID")).ToJSON(0))
+        }
+        Set out = {"reports": (list)}
+    } ElseIf action="reports.get" {
+        Set r = ##class(Copilot.Data.Report).%OpenId(p.%Get("id"))
+        Set out = $Select($IsObject(r):r.ToJSON(1), 1:{"error": "Report not found."})
     } ElseIf action="explain" {
         Set out = ##class(Copilot.AI.SQLAssistant).ExplainSQL(p.%Get("sql"), schemas)
     } ElseIf action="fix" {
@@ -112,10 +130,114 @@ ClassMethod Status() As %DynamicObject
             "callsToday": (calls),
             "tokensToday": (tokens)
         },
+        "privacyMode": (##class(Copilot.Core.Config).PrivacyMode()),
         "viewSchema": (##class(Copilot.Core.Config).ViewSchema()),
         "maxRows": (##class(Copilot.Core.Config).MaxRows()),
-        "simulator": ($Get(^Copilot.Simulator("running"), 0))
+        "simulator": ($Get(^Copilot.Simulator("running"), 0)),
+        "interop": ($Select(##class(%Dictionary.CompiledClass).%ExistsId("Ens.Director"):##class(Copilot.Interop.Util).IsRunning(), 1:0))
     }
+}
+
+// ---------------------------------------------------------------- interoperability
+
+/// Runs a question through the Ask workflow of the production (Copilot Ask Service).
+/// The catalog is built here, in the user's own process (so it only lists what the user may see),
+/// and the validated SQL is executed again here, as the user, so IRIS SQL privileges always apply.
+ClassMethod AskViaProduction(question As %String, schemas As %String, history As %DynamicArray) As %DynamicObject
+{
+    Set start = $ZHorolog
+    Set req = ##class(Copilot.Interop.Msg.AskRequest).%New()
+    Set req.Question = question, req.Schemas = schemas, req.Lang = ##class(Copilot.Core.Config).Lang(), req.Username = $Username
+    Set req.Catalog = ##class(Copilot.Core.Schema).SchemaText(schemas)
+    Set req.History = $Select($IsObject(history):history.%ToJSON(), 1:"[]")
+    $$$ThrowOnError(##class(Ens.Director).CreateBusinessService("Copilot Ask Service", .service))
+    $$$ThrowOnError(service.ProcessInput(req, .resp))
+    Set interop = {"sessionId": (resp.SessionId), "workflow": "Copilot Ask Process"}
+    Set suggestions = []
+    Try {
+        Set suggestions = ##class(%DynamicArray).%FromJSON($Select(resp.SuggestionsJSON="":"[]", 1:resp.SuggestionsJSON))
+    } Catch {
+    }
+    If resp.Status="message" {
+        Quit {"type": "message", "message": (resp.Message), "suggestions": (suggestions), "attempts": (resp.Attempts), "elapsedMs": (($ZHorolog - start) * 1000 \ 1), "interop": (interop)}
+    }
+    Set chart = {}
+    Try {
+        Set chart = ##class(%DynamicObject).%FromJSON($Select(resp.ChartJSON="":"{}", 1:resp.ChartJSON))
+    } Catch {
+    }
+    Set out = {"type": "query", "title": (resp.Title), "sql": (resp.SQL), "explanation": (resp.Explanation), "chart": (chart),
+        "viewName": (resp.ViewName), "suggestions": (suggestions), "attempts": (resp.Attempts), "interop": (interop)}
+    If resp.Status="error" {
+        Do out.%Set("error", resp.Error)
+    } Else {
+        Try {
+            Do out.%Set("result", ##class(Copilot.Core.SQL).Run(resp.SQL))
+        } Catch ex {
+            // e.g. the user has no SELECT privilege on a table the workflow could validate
+            Do out.%Set("error", ..Message(ex))
+        }
+    }
+    Do out.%Set("elapsedMs", ($ZHorolog - start) * 1000 \ 1)
+    Quit out
+}
+
+ClassMethod Interop(op As %String, p As %DynamicObject) As %DynamicObject
+{
+    Quit:op="status" ##class(Copilot.Interop.Util).Status()
+    Quit:op="sessions" {"sessions": (##class(Copilot.Interop.Util).Sessions(+p.%Get("limit", 40)))}
+    Quit:op="trace" ##class(Copilot.Interop.Util).Trace(+p.%Get("sessionId"))
+    If op="start" {
+        $$$ThrowOnError(##class(Copilot.Interop.Util).Start())
+        Quit ##class(Copilot.Interop.Util).Status()
+    }
+    Quit {"error": (##class(Copilot.Core.Config).T("Operação inválida: ", "Invalid operation: ")_op)}
+}
+
+ClassMethod Subscriptions(op As %String, p As %DynamicObject) As %DynamicObject
+{
+    If op="list" {
+        Set list = [], rs = ##class(%SQL.Statement).%ExecDirect(, "SELECT ID FROM Copilot_Data.Subscription ORDER BY ID DESC")
+        While rs.%Next() {
+            Do list.%Push(##class(Copilot.Data.Subscription).%OpenId(rs.%Get("ID")).ToJSON())
+        }
+        Quit {"subscriptions": (list)}
+    }
+    If op="save" {
+        Set s = $Select(p.%Get("id")'="":##class(Copilot.Data.Subscription).%OpenId(p.id), 1:##class(Copilot.Data.Subscription).%New())
+        Quit:'$IsObject(s) {"error": "Subscription not found."}
+        If p.%IsDefined("sql") {
+            // validated as the signed-in user: a user can only schedule queries he/she is allowed to run
+            Set sql = ##class(Copilot.Core.SQL).Normalize(p.sql)
+            Do ##class(Copilot.Core.SQL).Run(sql, 1)
+            Set s.SQLText = sql
+        }
+        For key="name","question","lang","alertMin","alertMax","webhook" {
+            Continue:'p.%IsDefined(key)
+            Set prop = $Case(key, "name":"Name", "question":"Question", "lang":"Lang", "alertMin":"AlertMin", "alertMax":"AlertMax", :"Webhook")
+            Set $Property(s, prop) = p.%Get(key)
+        }
+        Set:p.%IsDefined("intervalMinutes") s.IntervalMinutes = +p.intervalMinutes
+        Set:p.%IsDefined("active") s.Active = ''p.active
+        Set:s.Lang="" s.Lang = ##class(Copilot.Core.Config).Lang()
+        $$$ThrowOnError(s.%Save())
+        Quit s.ToJSON()
+    }
+    If op="delete" {
+        $$$ThrowOnError(##class(Copilot.Data.Subscription).%DeleteId(p.%Get("id")))
+        Quit {"ok": 1}
+    }
+    If op="run" {
+        Set s = ##class(Copilot.Data.Subscription).%OpenId(p.%Get("id"))
+        Quit:'$IsObject(s) {"error": "Subscription not found."}
+        If '##class(Copilot.Interop.Util).IsRunning() {
+            Quit {"error": (##class(Copilot.Core.Config).T("A production de interoperabilidade não está em execução.", "The interoperability production is not running."))}
+        }
+        $$$ThrowOnError(##class(Ens.Director).CreateBusinessService("Copilot Report Trigger", .service))
+        $$$ThrowOnError(service.ProcessInput(s.ToReportRequest("manual"), .out))
+        Quit out
+    }
+    Quit {"error": (##class(Copilot.Core.Config).T("Operação inválida: ", "Invalid operation: ")_op)}
 }
 
 /// Accepts a JSON list or a comma-separated string.

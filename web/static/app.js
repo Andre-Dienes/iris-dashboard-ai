@@ -255,6 +255,7 @@ function resultCard(item) {
     if (item.result) meta.append(h('span', { class: 'pill good' }, t('res.rows', { n: nf.format(item.result.rowCount) }) + (item.result.truncated ? t('res.limited') : '')), h('span', { class: 'pill' }, `SQL ${item.result.elapsedMs} ms`));
     if (item.elapsedMs) meta.append(h('span', { class: 'pill' }, t('res.ai', { s: nf.format(+(item.elapsedMs / 1000).toFixed(1)) })));
     if (item.attempts > 1) meta.append(h('span', { class: 'pill warn', title: t('res.autofixedTip') }, t('res.autofixed', { n: item.attempts })));
+    if (item.interop?.sessionId) meta.append(h('span', { class: 'pill link', title: t('res.interopTip'), onclick: () => openTrace(item.interop.sessionId) }, t('res.interop', { n: item.interop.sessionId })));
     card.append(meta);
     if (item.explanation) card.append(h('div', { class: 'explain md', html: md(item.explanation) }));
     if (item.sql) card.append(sqlBlock(item.sql));
@@ -282,6 +283,7 @@ function resultCard(item) {
       card.append(h('div', { class: 'actions' },
         h('button', { class: 'btn primary small', onclick: () => addToDashboard(item) }, t('res.addDash')),
         h('button', { class: 'btn ghost small', onclick: () => createView(item) }, t('res.createView')),
+        h('button', { class: 'btn ghost small', onclick: () => scheduleReport(item) }, t('res.schedule')),
         h('button', { class: 'btn ghost small', onclick: (e) => insight(item, insightBox, e.target) }, t('res.insight')),
         h('button', { class: 'btn ghost small', onclick: () => tuneWithAI(item, draw) }, t('res.tune')),
         h('button', { class: 'btn ghost small', onclick: () => download((item.viewName || t('res.csvName')) + '.csv', toCSV(item.result)) }, '⬇ CSV'),
@@ -331,6 +333,7 @@ async function insight(item, box, btn) {
     const r = await api('insight', { question: item.question || item.title, sql: item.sql, data: item.result });
     box.innerHTML = '';
     box.append(h('div', { class: 'insight md', html: md(r.text) }));
+    if (r.privacy) box.append(h('div', { class: 'tiny muted privacy-note' }, t('privacy.insight')));
   } catch (e) { box.innerHTML = ''; toast(e.message, true); }
   btn.disabled = false;
 }
@@ -370,10 +373,19 @@ async function ask(question) {
       state.agentSession = r.sessionId || state.agentSession;
       wait.remove();
       const card = h('div', { class: 'card' }, h('div', { class: 'md', html: md(r.text) }));
+      // the agent may write its final query in a ```sql block without running it through the tool
+      if (!r.sqls?.length) {
+        const blocks = [...String(r.text || '').matchAll(/```sql\s*([\s\S]*?)```/gi)].map((m) => m[1].trim()).filter(Boolean);
+        if (blocks.length) r.sqls = [blocks[blocks.length - 1]];
+      }
       if (r.sqls?.length) {
         const box = h('div');
         card.append(h('div', { class: 'actions' }, h('span', { class: 'tiny muted' }, t('ask.agentQueries', { n: r.sqls.length })),
           r.sqls.slice(-4).map((sql, i) => h('button', { class: 'btn ghost small', title: sql, onclick: () => showAgentQuery(sql, question, box) }, t('ask.viewResult', { n: i + 1 })))), box);
+        if (r.privacy) {
+          card.append(h('div', { class: 'tiny muted privacy-note' }, t('privacy.agent')));
+          showAgentQuery(r.sqls[r.sqls.length - 1], question, box);
+        }
       }
       pushMsg(card);
     } else {
@@ -747,6 +759,144 @@ async function loadHistory() {
       it.kind === 'ask' ? h('button', { class: 'btn ghost small', onclick: () => { go('ask'); ask(it.question); } }, t('hist.askAgain')) : null))));
 }
 
+// ------------------------------------------------------------------ workflows (interoperability)
+const FLOWS = {
+  ask: ['Copilot Ask Service', 'Copilot Ask Process', 'AI SQL Agent', 'IRIS SQL Executor', 'Audit Log'],
+  report: ['Copilot Report Scheduler', 'Copilot Report Trigger', 'Copilot Report Process', 'IRIS SQL Executor', 'AI Report Agent', 'Report Publisher', 'Webhook Notifier', 'Audit Log'],
+};
+const AI_NODES = new Set(['AI SQL Agent', 'AI Report Agent']);
+
+function minutesLabel(m) {
+  m = +m;
+  if (m % 10080 === 0) return `${m / 10080} ${LANG === 'en' ? 'week(s)' : 'semana(s)'}`;
+  if (m % 1440 === 0) return `${m / 1440} ${LANG === 'en' ? 'day(s)' : 'dia(s)'}`;
+  if (m % 60 === 0) return `${m / 60} h`;
+  return `${m} min`;
+}
+
+async function loadWorkflows() {
+  const st = await api('interop.status');
+  $('#wfState').textContent = st.running ? t('wf.running') : t('wf.stopped');
+  $('#wfState').className = 'pill ' + (st.running ? 'good' : 'warn');
+  $('#wfStart').classList.toggle('hidden', !!st.running);
+  const byName = Object.fromEntries((st.items || []).map((i) => [i.name, i]));
+  const box = $('#wfFlows');
+  box.innerHTML = '';
+  for (const [key, names] of Object.entries(FLOWS)) {
+    const flow = h('div', { class: 'flow' });
+    names.forEach((n, i) => {
+      const it = byName[n];
+      if (!it) return;
+      if (i > 0) flow.append(h('span', { class: 'arrow' }, key === 'report' && i === 1 ? '/' : '→'));
+      flow.append(h('div', { class: `node ${it.kind} ${AI_NODES.has(n) ? 'ai' : ''} ${it.errorsLastHour ? 'err' : ''}`, title: `${it.className}\n${it.comment || ''}` },
+        h('span', { class: 'k' }, (AI_NODES.has(n) ? '🤖 ' : '') + t('wf.kind.' + it.kind)), h('b', {}, n),
+        h('span', { class: 'c' }, t('wf.msgs', { n: it.messagesLastHour }) + (it.errorsLastHour ? ' · ' + t('wf.errs', { n: it.errorsLastHour }) : '') + (it.queue ? ' · ' + t('wf.queue', { n: it.queue }) : ''))));
+    });
+    box.append(h('div', { class: 'flow-title' }, t(key === 'ask' ? 'wf.askFlow' : 'wf.reportFlow')), flow);
+  }
+  await Promise.all([loadSubscriptions(), loadReports(), loadSessions()]);
+}
+
+async function loadSubscriptions() {
+  const r = await api('subscriptions.list');
+  const box = $('#wfSubs');
+  box.innerHTML = '';
+  if (!r.subscriptions.length) { box.append(h('p', { class: 'muted' }, t('wf.noSubs'))); return; }
+  box.append(h('table', { class: 'list' }, h('tbody', {}, r.subscriptions.map((s) => h('tr', {},
+    h('td', {}, h('b', {}, s.name), s.active ? null : h('span', { class: 'pill warn', style: 'margin-left:6px' }, t('wf.paused')),
+      h('div', { class: 'tiny muted' }, t('wf.every', { n: minutesLabel(s.intervalMinutes) }),
+        s.alertMin || s.alertMax ? ' · ' + t('wf.alert', { r: [s.alertMin ? '< ' + s.alertMin : '', s.alertMax ? '> ' + s.alertMax : ''].filter(Boolean).join(' / ') }) : '',
+        s.webhook ? ' · webhook' : ''),
+      h('div', { class: 'tiny muted' }, s.lastRunAt ? t('wf.last', { d: fmt(s.lastRunAt, 'timestamp') }) : '', s.nextRunAt && s.active ? ' · ' + t('wf.next', { d: fmt(s.nextRunAt, 'timestamp') }) : '')),
+    h('td', { style: 'text-align:right;white-space:nowrap' },
+      h('button', { class: 'btn primary small', onclick: () => runSubscription(s) }, t('wf.runNow')), ' ',
+      h('button', { class: 'btn ghost small', onclick: async () => { await api('subscriptions.save', { id: s.id, active: s.active ? 0 : 1 }); loadSubscriptions(); } }, t(s.active ? 'wf.pause' : 'wf.resume')), ' ',
+      h('button', { class: 'btn ghost small danger', onclick: async () => { if (confirm(t('wf.confirmDelete', { n: s.name }))) { await api('subscriptions.delete', { id: s.id }); loadSubscriptions(); } } }, '✕')))))));
+}
+
+async function runSubscription(s) {
+  try {
+    const r = await api('subscriptions.run', { id: s.id });
+    toast(t('wf.started', { n: r.sessionId }));
+    setTimeout(() => { if (state.view === 'workflows') { loadReports(); loadSessions(r.sessionId); loadSubscriptions(); } }, 15000);
+    loadSessions(r.sessionId);
+  } catch (e) { toast(e.message, true); }
+}
+
+async function loadReports() {
+  const r = await api('reports.list');
+  const box = $('#wfReports');
+  box.innerHTML = '';
+  if (!r.reports.length) { box.append(h('p', { class: 'muted' }, t('wf.noReports'))); return; }
+  box.append(h('table', { class: 'list' }, h('tbody', {}, r.reports.slice(0, 15).map((rep) => h('tr', {},
+    h('td', {}, rep.isAlert ? h('span', { class: 'pill warn', style: 'margin-right:6px' }, t('wf.alertBadge')) : null,
+      h('a', { href: '#', onclick: (e) => { e.preventDefault(); openReport(rep.id); } }, rep.title || '#' + rep.id),
+      h('div', { class: 'tiny muted' }, fmt(rep.createdAt, 'timestamp'), ' · ', rep.filePath)),
+    h('td', { style: 'text-align:right' }, h('span', { class: 'pill link', onclick: () => openTrace(rep.sessionId) }, t('wf.session', { n: rep.sessionId }))))))));
+}
+
+async function openReport(id) {
+  const rep = await api('reports.get', { id });
+  const dlg = $('#dlg');
+  $('#dlgTitle').textContent = rep.title;
+  $('#dlgOk').textContent = 'OK';
+  const body = $('#dlgBody');
+  body.innerHTML = '';
+  body.append(h('div', { class: 'md', style: 'max-height:60vh;overflow:auto', html: md(rep.markdown) }));
+  dlg.returnValue = '';
+  dlg.showModal();
+}
+
+async function loadSessions(selectId) {
+  const r = await api('interop.sessions', { limit: 40 });
+  const box = $('#wfSessions');
+  box.innerHTML = '';
+  if (!r.sessions.length) { box.append(h('p', { class: 'muted' }, t('wf.noSessions'))); return; }
+  r.sessions.forEach((s) => box.append(h('button', { 'data-sid': s.sessionId, class: String(s.sessionId) === String(selectId) ? 'active' : '', onclick: () => showTrace(s.sessionId) },
+    h('b', {}, `#${s.sessionId} `), s.kind === 'ask' ? '💬 ' : s.kind === 'report' ? '📄 ' : '', s.source,
+    h('div', { class: 'tiny muted' }, fmt(s.started, 'timestamp'), ' · ', t('wf.msgCount', { n: s.messages }), s.errors ? ' · ⚠ ' + s.errors : ''))));
+  if (selectId) showTrace(selectId);
+}
+
+async function showTrace(sessionId) {
+  $$('#wfSessions button').forEach((b) => b.classList.toggle('active', b.dataset.sid === String(sessionId)));
+  const box = $('#wfTrace');
+  box.innerHTML = '';
+  box.append(thinking(t('dash.loading')));
+  const tr = await api('interop.trace', { sessionId });
+  box.innerHTML = '';
+  if (!tr.messages.length) { box.append(h('p', { class: 'muted' }, t('wf.pick'))); return; }
+  tr.messages.forEach((m) => {
+    const isResp = String(m.type).toLowerCase().startsWith('resp');
+    const body = Object.entries(m.body || {}).map(([k, v]) => `${k}: ${v}`).join('\n');
+    box.append(h('div', { class: 'tmsg' + (isResp ? ' resp' : '') + (m.isError ? ' err' : '') },
+      h('div', { class: 'hd' }, h('b', {}, m.source), ' → ', h('b', {}, m.target), ' ', h('span', { class: 'pill' }, m.bodyClass.split('.').pop()), ' ',
+        h('span', { class: 'tiny muted' }, `${String(m.created).slice(11, 23)} · ${m.status}`)),
+      m.isError ? h('div', { class: 'err-box' }, m.error) : null,
+      body ? h('details', {}, h('summary', {}, t('wf.body')), h('pre', {}, body)) : null));
+  });
+}
+
+function openTrace(sessionId) {
+  go('workflows');
+  setTimeout(() => loadSessions(sessionId), 300);
+}
+
+async function scheduleReport(item) {
+  const v = await dialog(t('sch.title'), [
+    { name: 'name', label: t('sch.name'), value: item.title || '', required: true },
+    { name: 'interval', label: t('sch.interval'), type: 'select', options: [[15, t('sch.15')], [60, t('sch.60')], [1440, t('sch.1440')], [10080, t('sch.10080')]], value: 1440 },
+    [{ name: 'alertMin', label: t('sch.alertMin'), placeholder: t('sch.optional') }, { name: 'alertMax', label: t('sch.alertMax'), placeholder: t('sch.optional') }],
+    { name: 'webhook', label: t('sch.webhook'), placeholder: 'https://...' },
+  ], t('sch.ok'));
+  if (!v?.name) return;
+  try {
+    await api('subscriptions.save', { name: v.name, question: item.question || item.title || '', sql: item.sql, intervalMinutes: +v.interval,
+      alertMin: v.alertMin.trim(), alertMax: v.alertMax.trim(), webhook: v.webhook.trim(), lang: LANG });
+    toast(t('sch.done'));
+  } catch (e) { toast(e.message, true); }
+}
+
 // ------------------------------------------------------------------ sources (schemas)
 function renderSources() {
   const pop = $('#sourcesPop');
@@ -774,7 +924,7 @@ function go(view) {
   $('#viewTitle').textContent = t('title.' + view);
   $('.sidebar').classList.remove('open');
   if (view !== 'dashboards') stopTimer();
-  const load = { dashboards: () => loadDashboards(), views: loadViews, catalog: () => loadCatalog(), history: loadHistory }[view];
+  const load = { dashboards: () => loadDashboards(), workflows: () => loadWorkflows(), views: loadViews, catalog: () => loadCatalog(), history: loadHistory }[view];
   if (load) load().catch((e) => toast(e.message, true));
 }
 
@@ -789,6 +939,7 @@ function applyStatus(s) {
   llm.innerHTML = s.llm.configured
     ? `<span class="dot"></span>${t('llm.on')} · <b>${esc(s.llm.provider)}</b> / ${esc(s.llm.model)}<br><span class="tiny">${esc(t('llm.calls', { n: s.llm.callsToday, t: nf.format(s.llm.tokensToday) }))}</span>`
     : `<span class="dot"></span>${esc(t('llm.off'))}<br><span class="tiny">${esc(t('llm.offHint'))}</span>`;
+  if (s.privacyMode) llm.innerHTML += `<div class="privacy" title="${esc(t('privacy.tip'))}">${esc(t('privacy.badge'))}</div>`;
   $('#irisStatus').textContent = `${s.namespace} · ${(s.iris || '').split(' (')[0]}`;
   $('#irisStatus').title = s.iris;
   $('#userBadge').textContent = s.user;
@@ -911,5 +1062,7 @@ $('#dashDelete').addEventListener('click', async () => {
 $('#catalogFilter').addEventListener('input', () => loadCatalogList());
 $('#catalogRefresh').addEventListener('click', () => loadCatalog(true));
 $('#glossaryAdd').addEventListener('click', () => editGlossary());
+$('#wfReload').addEventListener('click', () => loadWorkflows().catch((e) => toast(e.message, true)));
+$('#wfStart').addEventListener('click', async () => { try { await api('interop.start'); loadWorkflows(); } catch (e) { toast(e.message, true); } });
 
 boot();

@@ -81,6 +81,10 @@ ClassMethod ConverseJSON(message As %String, sessionId As %String = "", schemas 
         // new conversation: hand over the whole catalog at once (fewer tool round-trips and fewer mapping mistakes)
         Set prompt = "Available data catalog:"_$Char(10)_##class(Copilot.Core.Schema).SchemaText(schemas)_$Char(10,10)_##class(Copilot.Core.Config).LanguageRule()_$Char(10,10)_"User question: "_message
     }
+    If ##class(Copilot.Core.Config).PrivacyMode() {
+        Set prompt = prompt_$Char(10,10)_"PRIVACY MODE IS ON: RunQuery only tells you whether a query works, its columns and its row count; the values stay in IRIS and are shown to the user in the portal. "_
+            "Build the best final query, explain in plain language what it returns and how to read it, and never state or guess numbers, names or values. Put the final query in a ```sql block."
+    }
     Set response = agent.Chat(session, prompt)
     Do session.%Save()
     Set elapsed = ($ZHorolog - start) * 1000 \ 1
@@ -90,7 +94,7 @@ ClassMethod ConverseJSON(message As %String, sessionId As %String = "", schemas 
         Do sqls.%Push(%CopilotAgentSQL(i))
     }
     Do ##class(Copilot.Data.QueryLog).Record("agent", message, $Select(sqls.%Size():sqls.%Get(sqls.%Size() - 1), 1:""), "ok", sqls.%Size(), 0, elapsed, "")
-    Quit {"text": (response.Content), "sessionId": (session.%Id()), "sqls": (sqls), "elapsedMs": (elapsed)}.%ToJSON()
+    Quit {"text": (response.Content), "sessionId": (session.%Id()), "sqls": (sqls), "elapsedMs": (elapsed), "privacy": (##class(Copilot.Core.Config).PrivacyMode())}.%ToJSON()
 }
 
 }

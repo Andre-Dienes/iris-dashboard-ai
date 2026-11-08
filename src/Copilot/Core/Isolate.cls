@@ -12,6 +12,8 @@ ClassMethod Call(class As %String, method As %String, timeoutSecs As %Integer = 
     Set ^IRIS.Temp.Copilot(key, "class") = class
     Set ^IRIS.Temp.Copilot(key, "method") = method
     Set ^IRIS.Temp.Copilot(key, "args") = +$Get(args)
+    // the worker answers in the same language as the caller
+    Set ^IRIS.Temp.Copilot(key, "lang") = $Get(%CopilotLang)
     For i=1:1:+$Get(args) {
         Do ..PutLong($Name(^IRIS.Temp.Copilot(key, "args", i)), $Get(args(i)))
     }
@@ -41,6 +43,7 @@ ClassMethod Worker(key As %String)
 {
     Try {
         Set class = ^IRIS.Temp.Copilot(key, "class"), method = ^IRIS.Temp.Copilot(key, "method")
+        Do ##class(Copilot.Core.Config).SetLang($Get(^IRIS.Temp.Copilot(key, "lang")))
         Set n = +$Get(^IRIS.Temp.Copilot(key, "args"))
         For i=1:1:n {
             Set args(i) = ..GetLong($Name(^IRIS.Temp.Copilot(key, "args", i)))

@@ -9,6 +9,7 @@ its own mistakes and picks the best chart. With one click the result becomes a *
 reusable **SQL view** that any tool (ODBC/JDBC, BI, Excel) can query.
 
 - [Features](#features)
+- [AI agents in interoperability workflows](#ai-agents-in-interoperability-workflows)
 - [Architecture](#architecture)
 - [Step by step: run it on your machine](#step-by-step-run-it-on-your-machine)
 - [Step by step: connect your own database](#step-by-step-connect-your-own-database)
@@ -22,6 +23,7 @@ reusable **SQL view** that any tool (ODBC/JDBC, BI, Excel) can query.
 
 | Area | What it does |
 | --- | --- |
+| **Interoperability workflows** | An IRIS Interoperability production where the AI agents are workflow steps: every question flows through an Ask workflow (AI SQL Agent ⇄ IRIS SQL Executor self-correction loop), and scheduled reports/alerts flow through a BPL workflow (data → alert rule → AI Report Agent → file + webhook). A **Workflows** page shows the production, schedules, reports and a message trace viewer. |
 | **Ask - SQL Query** | Natural language → IRIS SQL → execution → chart/table. Multi-turn ("now only the West region", "split by channel"). Self-correction: when IRIS returns an error or 0 rows, the real error goes back to the LLM, which fixes the query (up to 3 attempts). |
 | **Ask - AI Analyst** | Autonomous `%AI.Agent` with tools (`%AI.ToolSet`): lists schemas, describes tables, runs queries, cross-checks results and writes an analysis. The queries the agent ran can be opened as charts. |
 | **Result actions** | Add to dashboard · Create view · Analyze result (AI executive summary) · Refine with AI · CSV export · Open in the SQL editor. |
@@ -31,6 +33,66 @@ reusable **SQL view** that any tool (ODBC/JDBC, BI, Excel) can query.
 | **Catalog + Business glossary** | Schemas, tables, columns, primary keys and automatically detected relationships, plus an editable **business glossary**: official definitions ("revenue", "last month", "average order value"...) that the AI must follow in every question, dashboard and analysis. |
 | **History** | Audit trail of questions, generated SQL, attempts, time and errors, with "reopen" and "ask again". |
 | **Two languages** | English and Portuguese (Brazil) for the UI and for every AI answer, switchable at any time. |
+| **Privacy mode** | `PRIVACY_MODE=1`: no data value is ever sent to the LLM - only the question and metadata. Designed for personal and sensitive data (LGPD, GDPR, HIPAA). |
+
+## AI agents in interoperability workflows
+
+IRIS Data Copilot runs an IRIS Interoperability production, `Copilot.Interop.Production`, in which the AI agents
+powered by InterSystems AI Hub are regular workflow components - with queues, message trace, audit and retries.
+
+```mermaid
+flowchart LR
+    subgraph ASK[Ask workflow - every question asked in the portal]
+        AS[Copilot Ask Service<br/>BS] --> AP[Copilot Ask Process<br/>BP]
+        AP -->|GenerateSQLRequest| AG[🤖 AI SQL Agent<br/>BO · %AI.Provider]
+        AP -->|ExecuteSQLRequest| EX[IRIS SQL Executor<br/>BO]
+        EX -. error / 0 rows = feedback .-> AP
+        AP -->|AuditRequest| AU[Audit Log<br/>BO]
+    end
+    subgraph REP[Report and alert workflow - scheduled or on demand]
+        SC[Copilot Report Scheduler<br/>BS · Ens.InboundAdapter] --> RP[Copilot Report Process<br/>BPL]
+        TR[Copilot Report Trigger<br/>BS · Run now] --> RP
+        RP --> EX2[IRIS SQL Executor<br/>BO]
+        RP -->|alert rule| RA[🤖 AI Report Agent<br/>BO · %AI.Agent + tools]
+        RP --> PU[Report Publisher<br/>BO · File Outbound Adapter]
+        RP --> WH[Webhook Notifier<br/>BO · Teams / Slack]
+        RP --> AU2[Audit Log<br/>BO]
+    end
+```
+
+| Component | Type | What it does |
+| --- | --- | --- |
+| `Copilot Ask Service` | Business service (adapterless) | Entry point; the portal calls it through `Ens.Director.CreateBusinessService` for every question. |
+| `Copilot Ask Process` | Business process | Self-correction loop: sends the question to the AI SQL Agent, validates the SQL with the IRIS SQL Executor and, on an IRIS error or an empty result, sends the feedback back to the agent (up to 3 attempts). Every attempt is a message in the trace. |
+| `AI SQL Agent` | Business operation | LLM through AI Hub (`%AI.Provider`): question + catalog + glossary + feedback → IRIS SQL. |
+| `IRIS SQL Executor` | Business operation | Read-only guard and execution. In the Ask workflow it only validates (no rows are returned). |
+| `Copilot Report Scheduler` | Business service (`Ens.InboundAdapter`, CallInterval 30 s) | Finds report subscriptions that are due and starts a Report workflow for each. |
+| `Copilot Report Trigger` | Business service (adapterless) | "Run now" from the portal. |
+| `Copilot Report Process` | Business process (**BPL**) | Current data → alert rule (first numeric value vs. thresholds) → AI narrative → publish → notify → audit. |
+| `AI Report Agent` | Business operation | Runs the autonomous **`%AI.Agent`** (`Copilot.AI.Analyst` with its `%AI.ToolSet`) to write the report narrative. If the LLM is unavailable the workflow still publishes the data. |
+| `Report Publisher` | Business operation (`EnsLib.File.OutboundAdapter`) | Writes each report as Markdown to `/home/irisowner/copilot/reports/` and stores it for the portal. The data table comes from IRIS, never from the LLM. |
+| `Webhook Notifier` | Business operation | Optional POST to an external system (Microsoft Teams / Slack incoming webhooks, automation tools). |
+| `Audit Log` | Business operation | Records every AI interaction (question, SQL, attempts, rows, time, error, IRIS user). |
+
+**How to see it:**
+
+1. Ask any question in **Ask** → the result card shows a **🔀 session N** badge → click it to open the message
+   trace of that question.
+2. Open **Workflows**: production status, live message counts per component, scheduled reports (**▶ Run now**),
+   generated reports and the message trace of every session. (The 2027.1 AI Hub images ship without the
+   Management Portal web server, so the portal includes its own trace viewer. With a web server, the standard
+   Interoperability pages - production configuration, BPL diagram, Visual Trace - work as usual.)
+3. In any result, use **⏰ Schedule report** to create your own subscription (frequency, alert thresholds and an
+   optional webhook).
+
+The demo ships with a **"Daily revenue check"** subscription (alert when revenue today is below $50,000) that runs once
+at startup, so the Workflows page already has a report and a message trace on the first visit.
+
+**Security in the workflows:** production jobs run under the IRIS service account, so the Ask workflow never returns
+rows to the user: the catalog is built in the signed-in user's own process (listing only what that user may see) and
+the validated SQL is executed again as that user before any data is shown. Report subscriptions are validated as their
+owner when created. If the production is stopped, the portal falls back to a direct call and keeps working. Users
+other than `_SYSTEM` need an Interoperability role (e.g. `%EnsRole_Operator`) to trigger the workflows.
 
 ## Architecture
 
@@ -50,6 +112,9 @@ flowchart LR
         Q --> D[(Your IRIS tables<br/>demo: Core · Sales · Finance · Inventory)]
         F --> P[(Dashboards, widgets, glossary,<br/>history, LLM call log)]
         M[Copilot.MCP.Service<br/>%AI.MCP.Service] --> T
+        F --> X[Copilot.Interop.Production<br/>Ask + Report workflows]
+        X --> A
+        X --> G
     end
     L -->|provider API| LLM[(OpenAI / Anthropic /<br/>OpenAI-compatible endpoint)]
 ```
@@ -390,6 +455,7 @@ These steps matter more than the model you use:
 5. **Views for complex logic.** Encapsulate complex business rules in SQL views and describe them; the AI will
    prefer querying the view.
 6. **Privileges.** Users sign in with their IRIS credentials, so grant each role `SELECT` only on what it may see.
+7. **Personal data?** Turn on `PRIVACY_MODE=1` (see [Security](#security)) and hide schemas the AI does not need.
 
 ## Configuration reference
 
@@ -406,6 +472,8 @@ Change them at run time with `do ##class(Copilot.Core.Config).Set("KEY", "value"
 | `LLM_API_KEY` | | API key (falls back to `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`). |
 | `LLM_BASE_URL` | | OpenAI-compatible endpoint (Azure, Ollama, vLLM, LM Studio). |
 | `COPILOT_LANG` | `en` | Default answer language when the UI sends none (`en` or `pt`). |
+| `PRIVACY_MODE` | `0` | `1` = no data value is sent to the LLM (metadata only). |
+| `PRIVACY_MIN_ROWS` | `10` | Privacy mode: minimum result size for numeric statistics to be shared with the AI. |
 | `IRIS_NAMESPACE` | `COPILOT` | Namespace the portal connects to. |
 | `VISIBLE_SCHEMAS` | | Allow-list of schemas the AI may see (comma separated). |
 | `HIDDEN_SCHEMAS` | | Extra schema prefixes to hide (comma separated). |
@@ -441,6 +509,17 @@ To add a language, add a block to `I18N` in `web/static/i18n.js` and a branch in
   write/DDL keywords outside literals - for AI-generated SQL, the editor and dashboard widgets alike.
 - Creating views is the only write operation, always confirmed by the user and restricted to the `Analytics` schema
   (configurable).
+- **What the LLM sees.** In the main SQL flow the model receives the question and metadata only (table/column names,
+  descriptions, relationships, glossary, today's date and up to 12 sample values of low-cardinality text columns);
+  **result rows never leave IRIS**. With privacy mode off, "Analyze result" sends up to 80 rows and the AI Analyst
+  sees up to 50 rows per query.
+- **Privacy mode (`PRIVACY_MODE=1`)**, set by the administrator, guarantees that **no data value is sent to the LLM**:
+  sample values are not collected; "Analyze result" sends only column names, the row count and numeric statistics
+  (min, max, average, sum), and none at all for results smaller than `PRIVACY_MIN_ROWS` (default 10) to avoid
+  re-identification; the AI Analyst only learns whether a query works and its shape, while the portal runs the final
+  query in IRIS and shows the numbers to the user. A "🔒 Privacy mode" badge is shown in the sidebar.
+- **Full sovereignty:** point AI Hub to a private or on-premises model with `LLM_BASE_URL` (Ollama, vLLM, Azure
+  OpenAI in your tenant) so not even metadata leaves your infrastructure.
 - LLM keys live only in `.env` (git-ignored) or in IRIS config; they never reach the browser. License keys live in
   `keys/*.key` (git-ignored).
 - This is a local demo: `_SYSTEM/SYS` is the default password of the image. Do not expose the ports on a public
@@ -471,8 +550,14 @@ src/Copilot/
   Core/SQL.cls            read-only validation and execution
   Core/Isolate.cls        runs AI operations in an isolated process
   Core/Config.cls         configuration (^Copilot.Config → environment → default) and language rules
-  Data/                   Dashboard, Widget, Glossary, QueryLog, LLMCall
+  Data/                   Dashboard, Widget, Glossary, QueryLog, LLMCall, Subscription, Report
   MCP/Service.cls         %AI.MCP.Service at /mcp/copilot
+  Interop/Production.cls  interoperability production (Ask + Report workflows)
+  Interop/Service/        AskService, ReportScheduler (Ens.InboundAdapter), ReportTrigger
+  Interop/Process/        AskProcess (self-correction loop), ReportProcess (BPL)
+  Interop/Operation/      AISQLAgent, SQLExecutor, AIReportAgent, ReportPublisher (File adapter), WebhookNotifier, AuditLog
+  Interop/Msg/            request/response messages
+  Interop/Util.cls        production status, sessions and message trace for the portal
   Setup/                  Installer, DemoData, Simulator
 web/
   app/main.py             FastAPI: sign-in, sessions, /api/call/{action}
@@ -493,7 +578,7 @@ package; for the portal, run `docker compose up -d --build web`.
 
 | Build | Result |
 | --- | --- |
-| `iris:2027.1.0AI.108.0` + license key | Validated end to end: portal, NL→SQL with self-correction, AI Analyst (`%AI.Agent`), dashboard generation, views, live dashboard, EN and PT-BR. |
+| `iris:2027.1.0AI.108.0` + license key | Validated end to end: interoperability production (Ask and Report workflows, auto-start, message trace), portal, NL→SQL with self-correction, AI Analyst (`%AI.Agent`), scheduled AI reports and alerts, dashboard generation, views, live dashboard, privacy mode, EN and PT-BR. |
 | `irishealth-community:2026.3.0AI.136.0` | Works without a key, including the portal. |
 | `iris-community:2027.1.0AI.109.0` | Build named in the AI Hub program instructions (same setup, key in `keys/`); not yet tested here. |
 

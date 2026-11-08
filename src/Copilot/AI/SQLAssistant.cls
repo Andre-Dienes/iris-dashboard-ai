@@ -129,6 +129,31 @@ ClassMethod Ask(question As %String, schemas As %String = "", history As %Dynami
     Quit out
 }
 
+/// One generation step of the Ask workflow (used by the AI SQL Agent business operation).
+/// catalog: context built in the user's own process; history: JSON array of previous turns;
+/// previousAnswer + feedback: the rejected attempt and why it was rejected. Returns the raw model answer.
+ClassMethod GenerateStep(question As %String, catalog As %String, history As %String = "", previousAnswer As %String = "", feedback As %String = "") As %String
+{
+    Set messages = [{"role": "system", "content": (..AskSystemPrompt(catalog))}]
+    Try {
+        Set turns = ##class(%DynamicArray).%FromJSON($Select(history="":"[]", 1:history))
+        Set from = $Select(turns.%Size() > 8: turns.%Size() - 8, 1:0)
+        For i=from:1:turns.%Size()-1 {
+            Set h = turns.%Get(i)
+            Continue:'$IsObject(h)
+            Continue:(h.role'="user")&&(h.role'="assistant")
+            Do messages.%Push({"role": (h.role), "content": ($Extract(h.content, 1, 4000))})
+        }
+    } Catch {
+    }
+    Do messages.%Push({"role": "user", "content": (question)})
+    If previousAnswer'="" {
+        Do messages.%Push({"role": "assistant", "content": (previousAnswer)})
+        Do messages.%Push({"role": "user", "content": (feedback)})
+    }
+    Quit ##class(Copilot.Core.LLM).Chat(messages, 0, "ask")
+}
+
 /// Explains a SQL query in plain language (markdown).
 ClassMethod ExplainSQL(sql As %String, schemas As %String = "") As %DynamicObject
 {
@@ -177,6 +202,14 @@ ClassMethod Insight(question As %String, sql As %String, data As %DynamicObject)
     Set system = "You are a data analyst. Analyze a query result and write an executive summary in markdown: "_
         "up to 5 bullets with highlights, trends, maximum/minimum values, concentration and one suggested next step. "_
         "Use only the numbers provided; never invent data."_nl_##class(Copilot.Core.Config).LanguageRule()
+    If ##class(Copilot.Core.Config).PrivacyMode() {
+        // privacy mode: only aggregated numeric statistics go to the model, never rows or text values
+        Set summary = ##class(Copilot.Core.SQL).Summary(data)
+        Set system = system_nl_"PRIVACY MODE: you only receive column names, the row count and numeric statistics (min, max, average, sum) - no individual rows or text values. "_
+            "Analyze what these statistics allow (range, average, spread, totals) and do not name or guess individual records or categories."
+        Set user = "Original question: "_question_nl_"SQL: "_sql_nl_"Result summary (JSON):"_nl_summary.%ToJSON()
+        Quit {"text": (##class(Copilot.Core.LLM).Complete(system, user, 0.2, "insight")), "privacy": 1}
+    }
     // cap the volume sent to the LLM
     Set rows = []
     If $IsObject(data), $IsObject(data.%Get("rows")) {

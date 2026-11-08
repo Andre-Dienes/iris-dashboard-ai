@@ -12,6 +12,7 @@ kill p set p("Globals")="COPILOT",p("Routines")="COPILOT"
 if '##class(Config.Namespaces).Exists("COPILOT") do ##class(Config.Namespaces).Create("COPILOT",.p)
 kill a set a("NameSpace")="COPILOT",a("DispatchClass")="Copilot.MCP.Service",a("AutheEnabled")=32,a("Recurse")=1,a("Enabled")=1
 if '##class(Security.Applications).Exists("/mcp/copilot") do ##class(Security.Applications).Create("/mcp/copilot",.a)
+do ##class(%EnsembleMgr).EnableNamespace("COPILOT",1)
 zn "COPILOT"
 do $system.OBJ.LoadDir("/src","ck-d",.err,1)
 write "Compile errors: ",+$get(err),!

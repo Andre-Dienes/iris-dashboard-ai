@@ -140,9 +140,57 @@ ClassMethod CleanError(text As %String) As %String
     Quit $ZStrip(text, "<>W")
 }
 
+/// Privacy-safe summary of a result: column names and types, row count and, for numeric columns,
+/// min / max / average / sum. No row and no text value is included.
+/// Statistics are omitted when the result has fewer than PRIVACY_MIN_ROWS rows (default 10): on tiny
+/// results an aggregate is effectively an individual value (re-identification risk).
+ClassMethod Summary(result As %DynamicObject) As %DynamicObject
+{
+    Set cols = [], stats = {}
+    Set minRows = +##class(Copilot.Core.Config).Get("PRIVACY_MIN_ROWS", 10)
+    Set n = result.columns.%Size()
+    Set:result.rowCount<minRows n = 0
+    For c=0:1:n-1 {
+        Set col = result.columns.%Get(c)
+        Do cols.%Push({"name": (col.name), "type": (col.type)})
+        Continue:col.type'="number"
+        Set min = "", max = "", sum = 0, count = 0
+        Set iter = result.rows.%GetIterator()
+        While iter.%GetNext(, .row) {
+            Set v = row.%Get(c)
+            Continue:v=""
+            Set count = count + 1, sum = sum + v
+            Set:(min="")||(v<min) min = v
+            Set:(max="")||(v>max) max = v
+        }
+        Continue:'count
+        Do stats.%Set(col.name, {"min": (min), "max": (max), "avg": ($Normalize(sum / count, 4)), "sum": ($Normalize(sum, 4)), "count": (count)})
+    }
+    If result.rowCount<minRows {
+        // still describe the columns, without any statistic
+        Set iter = result.columns.%GetIterator()
+        While iter.%GetNext(, .col) {
+            Do cols.%Push({"name": (col.name), "type": (col.type)})
+        }
+        Quit {"columns": (cols), "rowCount": (result.rowCount), "truncated": (result.truncated), "numericStats": {}, "note": ("Privacy mode: fewer than "_minRows_" rows, so no statistics are shared with the AI (re-identification risk).")}
+    }
+    Quit {"columns": (cols), "rowCount": (result.rowCount), "truncated": (result.truncated), "numericStats": (stats), "note": "Privacy mode: individual rows and text values are not shared with the AI."}
+}
+
 /// Runs a query and returns the rows as Markdown (used by the agent tools).
 ClassMethod RunMarkdown(sql As %String, maxRows As %Integer = 50) As %String
 {
+    If ##class(Copilot.Core.Config).PrivacyMode() {
+        // privacy mode: the agent only learns whether the query works and the shape of its result
+        Set summary = ..Summary(..Run(sql, ##class(Copilot.Core.Config).MaxRows()))
+        Set cols = "", iter = summary.columns.%GetIterator()
+        While iter.%GetNext(, .col) {
+            Set cols = cols_$Select(cols="":"", 1:", ")_col.name_" ("_col.type_")"
+        }
+        Quit "Query OK. Columns: "_cols_". Rows: "_summary.rowCount_$Select(summary.truncated:"+", 1:"")_"."_$Char(10)_
+            "PRIVACY MODE: the data values are NOT shared with you; the user sees them in the portal. "_
+            "Do not state or guess any number, name or value from this result."
+    }
     Set result = ..Run(sql, maxRows)
     Set nl = $Char(10), header = "|", sep = "|"
     Set iter = result.columns.%GetIterator()

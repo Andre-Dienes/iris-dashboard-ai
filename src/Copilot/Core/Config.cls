@@ -76,6 +76,17 @@ ClassMethod ViewSchema() As %String
     Quit ..Get("VIEW_SCHEMA", ..#DEFAULTVIEWSCHEMA)
 }
 
+/// Privacy mode (PRIVACY_MODE=1): no data value ever leaves IRIS towards the LLM.
+/// The model only receives the question and metadata (table/column names, descriptions, relationships, glossary).
+///   - catalog sample values are not collected
+///   - "Analyze result" sends only column names, row count and numeric statistics (no row, no text value)
+///   - the AI Analyst tools return only columns and row counts; the user sees the numbers in the portal
+/// Set by the administrator (environment or ^Copilot.Config), never by end users.
+ClassMethod PrivacyMode() As %Boolean
+{
+    Quit ..Get("PRIVACY_MODE", "0")="1"
+}
+
 /// Maximum number of rows returned to the UI.
 ClassMethod MaxRows() As %Integer
 {

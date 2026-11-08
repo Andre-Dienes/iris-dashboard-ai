@@ -27,6 +27,9 @@ ALLOWED_ACTIONS = {
     "widgets.save", "widgets.delete", "widgets.reorder",
     "views.list", "views.create", "views.drop",
     "glossary.list", "glossary.save", "glossary.delete",
+    "interop.status", "interop.sessions", "interop.trace", "interop.start",
+    "subscriptions.list", "subscriptions.save", "subscriptions.delete", "subscriptions.run",
+    "reports.list", "reports.get",
     "history",
 }
 

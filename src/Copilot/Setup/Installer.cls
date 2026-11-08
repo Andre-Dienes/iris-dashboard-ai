@@ -1,7 +1,8 @@
 /// Installation and startup.
 ///   Build()    - during the image build (iris/iris.script): demo dataset, sample dashboard, glossary
 ///                (skipped when COPILOT_DEMO=0 - use your own tables instead)
-///   Startup()  - on every container start (iris/entrypoint.sh): MCP tools and sales simulator
+///   Startup()  - on every container start (iris/entrypoint.sh): interoperability production, MCP tools
+///                and sales simulator
 ///   Install()  - installs the Copilot in an EXISTING IRIS namespace (no Docker, no demo data)
 Class Copilot.Setup.Installer Extends %RegisteredObject
 {
@@ -14,10 +15,12 @@ ClassMethod Build() As %Status
             $$$ThrowOnError(##class(Copilot.Setup.DemoData).Load())
             Do ..SeedDashboard()
             Do ##class(Copilot.Data.Glossary).Seed()
+            Do ..SeedSubscription()
             Write "IRIS Data Copilot installed with the demo dataset.",!
         } Else {
             Write "IRIS Data Copilot installed without demo data (COPILOT_DEMO=0).",!
         }
+        Do ..SetupInterop()
     } Catch ex {
         Set sc = ex.AsStatus()
         Write "Install error: ",ex.DisplayString(),!
@@ -33,6 +36,8 @@ ClassMethod Startup() As %Status
             "  configured=",##class(Copilot.Core.Config).IsConfigured(),!
         Do ..RegisterTools()
         Do ##class(Copilot.Setup.Simulator).Start()
+        Set psc = ##class(Copilot.Interop.Util).Start()
+        Write "Interoperability production: ",$Select($$$ISOK(psc):"running", 1:$System.Status.GetErrorText(psc)),!
         Write "IRIS Data Copilot ready.",!
     } Catch ex {
         Set sc = ex.AsStatus()
@@ -56,6 +61,8 @@ ClassMethod Install(withDemo As %Boolean = 0) As %Status
             Do ##class(Copilot.Data.Glossary).Seed()
         }
         Do ##class(Copilot.Core.Schema).Refresh()
+        Do ..SetupInterop()
+        $$$ThrowOnError(##class(Copilot.Interop.Util).Start())
         Do ..RegisterTools()
         Write "IRIS Data Copilot installed in namespace ",$Namespace,".",!
         Write "Visible schemas: ",##class(Copilot.Core.Schema).ListSchemas().%ToJSON(),!
@@ -64,6 +71,29 @@ ClassMethod Install(withDemo As %Boolean = 0) As %Status
         Write "Install error: ",ex.DisplayString(),!
     }
     Quit sc
+}
+
+/// Interoperability: report folder for the File Outbound Adapter and production auto-start.
+/// (The namespace must be interoperability-enabled: %EnsembleMgr.EnableNamespace - done by iris/iris.script.)
+ClassMethod SetupInterop() As %Status
+{
+    Set dir = "/home/irisowner/copilot/reports/"
+    Do:'##class(%File).DirectoryExists(dir) ##class(%File).CreateDirectoryChain(dir)
+    Set sc = ##class(Ens.Director).SetAutoStart(##class(Copilot.Interop.Util).#PRODUCTION)
+    Write "Production auto-start: ",$Select($$$ISOK(sc):"on", 1:$System.Status.GetErrorText(sc)),!
+    Quit sc
+}
+
+/// Sample report subscription for the demo (daily; use "Run now" in the Workflows page).
+ClassMethod SeedSubscription()
+{
+    Quit:##class(Copilot.Data.Subscription).%ExistsId(1)
+    Set s = ##class(Copilot.Data.Subscription).%New()
+    Set s.Name = "Daily revenue check"
+    Set s.Question = "Revenue of today by region, with an alert when total revenue today is below $50,000"
+    Set s.SQLText = "SELECT ROUND(SUM(o.TotalAmount), 2) AS RevenueToday, %EXACT(b.Region) AS Region FROM Sales.SalesOrder o JOIN Core.Branch b ON b.BranchID = o.BranchID WHERE o.Status <> 'Cancelled' AND CAST(o.OrderDate AS DATE) = CURRENT_DATE GROUP BY %EXACT(b.Region) ORDER BY RevenueToday DESC"
+    Set s.Lang = "en", s.IntervalMinutes = 1440, s.AlertMin = 50000, s.Owner = "_SYSTEM"
+    Do s.%Save()
 }
 
 /// Loads the MCP tool catalog of /mcp/copilot (when AI Hub MCP is available).
