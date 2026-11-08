@@ -1,0 +1,8 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+*.tar.gz
+keys/*.key
+*.key
+.claude/

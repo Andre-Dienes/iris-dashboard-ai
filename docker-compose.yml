@@ -1,0 +1,53 @@
+# IRIS Data Copilot - full stack: IRIS (data + AI Hub) + web portal.
+# Settings come from .env (copy .env.example). See README.md.
+services:
+  iris:
+    build:
+      context: .
+      dockerfile: iris/Dockerfile
+      args:
+        IMAGE: ${IRIS_IMAGE:-intersystems/iris-community:2027.1.0AI.109.0}
+        COPILOT_DEMO: ${COPILOT_DEMO:-1}
+    image: iris-data-copilot-iris:latest
+    container_name: copilot-iris
+    environment:
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - LLM_MODEL=${LLM_MODEL:-gpt-4o-mini}
+      - LLM_AGENT_MODEL=${LLM_AGENT_MODEL:-}
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - LLM_BASE_URL=${LLM_BASE_URL:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - COPILOT_LANG=${COPILOT_LANG:-en}
+      - VIEW_SCHEMA=${VIEW_SCHEMA:-Analytics}
+      - VISIBLE_SCHEMAS=${VISIBLE_SCHEMAS:-}
+      - HIDDEN_SCHEMAS=${HIDDEN_SCHEMAS:-}
+      - MAX_ROWS=${MAX_ROWS:-1000}
+      - SIMULATOR_INTERVAL=${SIMULATOR_INTERVAL:-5}
+    volumes:
+      - ./keys:/external/keys:ro
+    ports:
+      - "${IRIS_PORT:-1972}:1972"
+      - "${IRIS_WEB_PORT:-52773}:52773"
+    healthcheck:
+      test: ["CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/localhost/1972"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    stop_grace_period: 60s
+
+  web:
+    build:
+      context: web
+    image: iris-data-copilot-web:latest
+    container_name: copilot-web
+    environment:
+      - IRIS_HOST=iris
+      - IRIS_PORT=1972
+      - IRIS_NAMESPACE=${IRIS_NAMESPACE:-COPILOT}
+    ports:
+      - "${WEB_PORT:-8080}:8080"
+    depends_on:
+      iris:
+        condition: service_healthy

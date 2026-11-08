@@ -1,0 +1,20 @@
+# IRIS Data Copilot - web portal only, connected to an EXISTING IRIS instance.
+# Use it when the Copilot classes are installed in your own IRIS (see README, "Connect your own database",
+# option C). The LLM key and settings live in that IRIS instance (environment or ^Copilot.Config).
+#
+#   docker compose -f docker-compose.external.yml up -d --build
+services:
+  web:
+    build:
+      context: web
+    image: iris-data-copilot-web:latest
+    container_name: copilot-web
+    environment:
+      # host.docker.internal = the machine running Docker; use the IRIS server hostname/IP otherwise
+      - IRIS_HOST=${EXTERNAL_IRIS_HOST:-host.docker.internal}
+      - IRIS_PORT=${EXTERNAL_IRIS_PORT:-1972}
+      - IRIS_NAMESPACE=${IRIS_NAMESPACE:-USER}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${WEB_PORT:-8080}:8080"

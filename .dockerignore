@@ -1,0 +1,5 @@
+*.tar.gz
+.env
+web/
+.git/
+keys/

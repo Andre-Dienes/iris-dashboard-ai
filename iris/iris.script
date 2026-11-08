@@ -1,0 +1,19 @@
+zn "%SYS"
+do ##class(Security.Users).UnExpireUserPasswords("*")
+set sc = ##class(Security.Users).Get("_SYSTEM",.u) set u("ChangePassword")=0 do ##class(Security.Users).Modify("_SYSTEM",.u)
+do ##class(Security.Services).Get("%Service_Bindings",.s) set s("Enabled")=1 do ##class(Security.Services).Modify("%Service_Bindings",.s)
+do ##class(Security.Services).Get("%Service_CallIn",.s) set s("Enabled")=1 do ##class(Security.Services).Modify("%Service_CallIn",.s)
+set dir = "/usr/irissys/mgr/copilot/"
+if '##class(%File).DirectoryExists(dir) do ##class(%File).CreateDirectoryChain(dir)
+if '##class(SYS.Database).%ExistsId(dir) do ##class(SYS.Database).CreateDatabase(dir)
+kill p set p("Directory")=dir
+if '##class(Config.Databases).Exists("COPILOT") do ##class(Config.Databases).Create("COPILOT",.p)
+kill p set p("Globals")="COPILOT",p("Routines")="COPILOT"
+if '##class(Config.Namespaces).Exists("COPILOT") do ##class(Config.Namespaces).Create("COPILOT",.p)
+kill a set a("NameSpace")="COPILOT",a("DispatchClass")="Copilot.MCP.Service",a("AutheEnabled")=32,a("Recurse")=1,a("Enabled")=1
+if '##class(Security.Applications).Exists("/mcp/copilot") do ##class(Security.Applications).Create("/mcp/copilot",.a)
+zn "COPILOT"
+do $system.OBJ.LoadDir("/src","ck-d",.err,1)
+write "Compile errors: ",+$get(err),!
+do ##class(Copilot.Setup.Installer).Build()
+halt

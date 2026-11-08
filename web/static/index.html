@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>IRIS Data Copilot</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css?v=6">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f46e5'/%3E%3Cpath d='M9 22V10m7 12V14m7 8V8' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+</head>
+<body>
+
+<!-- ================================================================ login -->
+<div id="login" class="login">
+  <form id="loginForm" class="login-card">
+    <div class="login-top">
+      <div class="brand big"><span class="logo">▮▮▮</span><div><b>IRIS Data Copilot</b><small data-i18n="login.tagline"></small></div></div>
+      <div class="lang-switch" role="group" aria-label="Language"><button type="button" data-lang="pt">PT-BR</button><button type="button" data-lang="en">EN</button></div>
+    </div>
+    <p class="muted" data-i18n="login.intro"></p>
+    <label><span data-i18n="login.user"></span><input id="loginUser" autocomplete="username" value="_SYSTEM" required></label>
+    <label><span data-i18n="login.password"></span><input id="loginPass" type="password" autocomplete="current-password" required></label>
+    <button class="btn primary wide" type="submit" data-i18n="login.submit"></button>
+    <div id="loginError" class="error-text"></div>
+    <p class="tiny muted">Demo: <code>_SYSTEM</code> / <code>SYS</code></p>
+  </form>
+</div>
+
+<!-- ================================================================ app -->
+<div id="app" class="app hidden">
+  <aside class="sidebar">
+    <div class="brand"><span class="logo">▮▮▮</span><div><b>IRIS Data Copilot</b><small data-i18n="brand.tagline"></small></div></div>
+    <nav>
+      <button data-view="ask" class="active"><span>💬</span><span data-i18n="nav.ask"></span></button>
+      <button data-view="dashboards"><span>📊</span><span data-i18n="nav.dashboards"></span></button>
+      <button data-view="editor"><span>⌨️</span><span data-i18n="nav.editor"></span></button>
+      <button data-view="views"><span>🧩</span><span data-i18n="nav.views"></span></button>
+      <button data-view="catalog"><span>🗂️</span><span data-i18n="nav.catalog"></span></button>
+      <button data-view="history"><span>🕘</span><span data-i18n="nav.history"></span></button>
+    </nav>
+    <div class="side-foot">
+      <div id="llmStatus" class="llm-status"></div>
+      <div id="irisStatus" class="tiny muted"></div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <button id="menuBtn" class="icon-btn mobile-only" title="Menu">☰</button>
+      <h1 id="viewTitle"></h1>
+      <div class="top-actions">
+        <div class="sources">
+          <button id="sourcesBtn" class="btn ghost"><span data-i18n="top.sources"></span> <b id="sourcesLabel"></b> ▾</button>
+          <div id="sourcesPop" class="popover hidden"></div>
+        </div>
+        <div class="lang-switch" role="group" data-i18n-title="top.language"><button type="button" data-lang="pt">PT-BR</button><button type="button" data-lang="en">EN</button></div>
+        <span id="userBadge" class="user-badge"></span>
+        <button id="logoutBtn" class="btn ghost small" data-i18n="top.logout"></button>
+      </div>
+    </header>
+
+    <!-- ---------------------------------------------------------- ask -->
+    <section id="view-ask" class="view active">
+      <div id="chat" class="chat">
+        <div id="welcome" class="welcome">
+          <h2 data-i18n="ask.welcome"></h2>
+          <p class="muted" data-i18n-html="ask.intro"></p>
+          <div id="suggestions" class="chips"></div>
+          <button id="suggestBtn" class="btn ghost small" data-i18n="ask.suggestBtn"></button>
+        </div>
+      </div>
+      <div class="composer">
+        <div class="mode-switch" role="tablist">
+          <button data-mode="sql" class="active" data-i18n="ask.modeSql" data-i18n-title="ask.modeSqlTip"></button>
+          <button data-mode="agent" data-i18n="ask.modeAgent" data-i18n-title="ask.modeAgentTip"></button>
+        </div>
+        <div class="composer-row">
+          <textarea id="question" rows="1"></textarea>
+          <button id="sendBtn" class="btn primary" data-i18n="ask.send"></button>
+        </div>
+        <div class="composer-foot tiny muted"><span data-i18n="ask.hint"></span><button id="newChatBtn" class="link" data-i18n="ask.newChat"></button></div>
+      </div>
+    </section>
+
+    <!-- ---------------------------------------------------------- dashboards -->
+    <section id="view-dashboards" class="view">
+      <div class="toolbar">
+        <select id="dashSelect"></select>
+        <button id="dashNew" class="btn ghost small" data-i18n="dash.new"></button>
+        <button id="dashGen" class="btn primary small" data-i18n="dash.gen"></button>
+        <span class="spacer"></span>
+        <span id="liveBadge" class="live hidden" data-i18n="dash.live"></span>
+        <label class="tiny muted"><span data-i18n="dash.refresh"></span>
+          <select id="dashRefresh">
+            <option value="0" data-i18n="dash.manual"></option><option value="5">5 s</option><option value="10">10 s</option>
+            <option value="15">15 s</option><option value="30">30 s</option><option value="60">1 min</option><option value="300">5 min</option>
+          </select>
+        </label>
+        <button id="dashReload" class="btn ghost small" data-i18n-title="dash.reloadTip">↻</button>
+        <button id="dashEdit" class="btn ghost small" data-i18n="dash.rename"></button>
+        <button id="dashDelete" class="btn ghost small danger" data-i18n="dash.delete"></button>
+      </div>
+      <p id="dashDesc" class="muted dash-desc"></p>
+      <div id="dashGrid" class="dash-grid"></div>
+      <div id="dashEmpty" class="empty hidden">
+        <h3 data-i18n="dash.emptyTitle"></h3>
+        <p class="muted" data-i18n-html="dash.emptyText"></p>
+      </div>
+    </section>
+
+    <!-- ---------------------------------------------------------- editor -->
+    <section id="view-editor" class="view">
+      <div class="editor-wrap">
+        <textarea id="sqlEditor" spellcheck="false" data-i18n-ph="ed.ph"></textarea>
+        <div class="toolbar">
+          <button id="runSql" class="btn primary small" data-i18n="ed.run"></button>
+          <button id="explainSql" class="btn ghost small" data-i18n="ed.explain"></button>
+          <button id="tuneSql" class="btn ghost small" data-i18n="ed.tune"></button>
+          <span class="spacer"></span>
+          <span id="editorLimit" class="tiny muted"></span>
+        </div>
+      </div>
+      <div id="editorOut"></div>
+    </section>
+
+    <!-- ---------------------------------------------------------- views -->
+    <section id="view-views" class="view">
+      <p id="viewsIntro" class="muted"></p>
+      <div id="viewsList" class="cards"></div>
+    </section>
+
+    <!-- ---------------------------------------------------------- catalog -->
+    <section id="view-catalog" class="view">
+      <div class="card glossary-card">
+        <div class="toolbar" style="margin:0 0 6px">
+          <h3 style="margin:0" data-i18n="gl.title"></h3>
+          <span class="spacer"></span>
+          <button id="glossaryAdd" class="btn primary small" data-i18n="gl.add"></button>
+        </div>
+        <p class="muted tiny" style="margin:0 0 10px" data-i18n="gl.intro"></p>
+        <div id="glossaryList"></div>
+      </div>
+      <div class="toolbar">
+        <input id="catalogFilter" data-i18n-ph="cat.filter">
+        <span class="spacer"></span>
+        <button id="catalogRefresh" class="btn ghost small" data-i18n="cat.refresh"></button>
+      </div>
+      <div id="catalogList" class="catalog"></div>
+    </section>
+
+    <!-- ---------------------------------------------------------- history -->
+    <section id="view-history" class="view">
+      <div id="historyList"></div>
+    </section>
+  </main>
+</div>
+
+<dialog id="dlg"><form method="dialog" id="dlgForm"><h3 id="dlgTitle"></h3><div id="dlgBody"></div><div class="dlg-actions"><button value="cancel" class="btn ghost" formnovalidate data-i18n="dlg.cancel"></button><button id="dlgOk" value="ok" class="btn primary">OK</button></div></form></dialog>
+<div id="toast" class="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+<script src="/static/i18n.js?v=6"></script>
+<script src="/static/app.js?v=6"></script>
+</body>
+</html>
