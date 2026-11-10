@@ -233,8 +233,8 @@ Go to <http://localhost:8080> and sign in with `_SYSTEM` / `SYS` (demo password 
 | IRIS Data Copilot portal | <http://localhost:8080> |
 | API documentation (OpenAPI) | <http://localhost:8080/api/docs> |
 | IRIS Management Portal (through the Web Gateway container) | <http://localhost:52773/csp/sys/UtilHome.csp> (`_SYSTEM` / `SYS`) |
-| Production configuration | <http://localhost:52773/csp/copilot/EnsPortal.ProductionConfig.zen?PRODUCTION=Copilot.Interop.Production> |
-| Message Viewer / Visual Trace | <http://localhost:52773/csp/copilot/EnsPortal.MessageViewer.zen> |
+| Production configuration | <http://localhost:52773/csp/healthshare/copilot/EnsPortal.ProductionConfig.zen?PRODUCTION=Copilot.Interop.Production> |
+| Message Viewer / Visual Trace | <http://localhost:52773/csp/healthshare/copilot/EnsPortal.MessageViewer.zen> |
 | IRIS superserver | `localhost:1972` (namespace `COPILOT`) |
 
 ### 7. Try it

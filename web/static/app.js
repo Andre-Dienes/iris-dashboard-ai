@@ -451,13 +451,26 @@ function dialog(title, fields, okText) {
       return h('label', {}, f.label, input, f.hint ? h('span', { class: 'tiny muted' }, f.hint) : null);
     });
     body.append(...group(fields));
-    const onClose = () => {
+    // resolved from the form submit / cancel actions themselves: the dialog 'close' event is not
+    // dispatched reliably by some embedded browsers (e.g. background tabs)
+    const form = $('#dlgForm');
+    let done = false;
+    const finish = (ok) => {
+      if (done) return;
+      done = true;
+      form.removeEventListener('submit', onSubmit);
+      dlg.removeEventListener('cancel', onCancel);
       dlg.removeEventListener('close', onClose);
-      if (dlg.returnValue !== 'ok') return resolve(null);
+      if (!ok) return resolve(null);
       const out = {};
       for (const [k, el] of Object.entries(inputs)) out[k] = el.value;
       resolve(out);
     };
+    const onSubmit = (e) => finish((e.submitter?.value || dlg.returnValue) === 'ok');
+    const onCancel = () => finish(false);
+    const onClose = () => finish(dlg.returnValue === 'ok');
+    form.addEventListener('submit', onSubmit);
+    dlg.addEventListener('cancel', onCancel);
     dlg.addEventListener('close', onClose);
     dlg.returnValue = '';
     dlg.showModal();

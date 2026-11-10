@@ -256,7 +256,7 @@ ClassMethod AskViaProduction(question As %String, schemas As %String, history As
     Set start = $ZHorolog
     Set req = ##class(Copilot.Interop.Msg.AskRequest).%New()
     Set req.Question = question, req.Schemas = schemas, req.Lang = ##class(Copilot.Core.Config).Lang(), req.Username = $Username
-    Set req.Catalog = ##class(Copilot.Core.Schema).SchemaText(schemas)
+    Set req.Catalog = ##class(Copilot.Core.Schema).SchemaText(schemas, 1, 1, question)
     Set req.History = $Select($IsObject(history):history.%ToJSON(), 1:"[]")
     $$$ThrowOnError(##class(Ens.Director).CreateBusinessService("Copilot Ask Service", .service))
     $$$ThrowOnError(service.ProcessInput(req, .resp))
@@ -487,7 +487,13 @@ ClassMethod Views(op As %String, p As %DynamicObject) As %DynamicObject
         Set sql = ##class(Copilot.Core.SQL).Normalize(p.%Get("sql"))
         Set error = ##class(Copilot.Core.SQL).Validate(sql)
         Quit:error'="" {"error": (error)}
-        // IRIS views accept TOP without ORDER BY; ORDER BY without TOP is not allowed.
+        // IRIS views accept TOP without ORDER BY; ORDER BY without TOP is not allowed -> add TOP ALL.
+        Set upper = $ZConvert(##class(Copilot.Core.SQL).StripLiterals(sql), "U")
+        If (upper["ORDER BY")&&($Extract(upper, 1, 7)="SELECT ") {
+            Set rest = $ZStrip($Extract(sql, 8, *), "<W"), distinct = ""
+            If $ZConvert($Extract(rest, 1, 9), "U")="DISTINCT " Set distinct = "DISTINCT ", rest = $ZStrip($Extract(rest, 10, *), "<W")
+            Set:$ZConvert($Extract(rest, 1, 4), "U")'="TOP " sql = "SELECT "_distinct_"TOP ALL "_rest
+        }
         Set ddl = "CREATE OR REPLACE VIEW "_schema_"."_name_" AS "_sql
         Set rs = ##class(%SQL.Statement).%ExecDirect(, ddl)
         If rs.%SQLCODE<0 {

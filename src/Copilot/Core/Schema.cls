@@ -170,9 +170,12 @@ ClassMethod KeyColumns(cls As %Dictionary.CompiledClass, keyName As %String) As 
 }
 
 /// Compact context for the LLM: today's date, business glossary and catalog.
-ClassMethod SchemaText(schemas As %String = "", withSamples As %Boolean = 1, withGlossary As %Boolean = 1) As %String
+/// focus: the question (or SQL) being answered. When the catalog is large, tables relevant to it are
+/// placed first, so they survive the MAX_SCHEMA_CHARS truncation.
+ClassMethod SchemaText(schemas As %String = "", withSamples As %Boolean = 1, withGlossary As %Boolean = 1, focus As %String = "") As %String
 {
     Set catalog = ..Catalog(schemas)
+    Set:(focus'="")&&(catalog.%Size()>20) catalog = ..RankCatalog(catalog, focus)
     Set max = ##class(Copilot.Core.Config).MaxSchemaChars()
     // privacy mode: no data values in the context, metadata only
     Set:##class(Copilot.Core.Config).PrivacyMode() withSamples = 0
@@ -214,6 +217,89 @@ ClassMethod SchemaText(schemas As %String = "", withSamples As %Boolean = 1, wit
             Quit
         }
         Set out = out_block
+    }
+    Quit out
+}
+
+/// Orders the catalog by relevance to the focus text (question or SQL):
+///   +2 per focus word found in the table name, +1 per word in column names/descriptions,
+///   +3 for tables referenced by a glossary term whose words appear in the focus,
+///   +1 for tables related (->) to a relevant table, so the JOIN partners come along.
+/// Ties keep the original order.
+ClassMethod RankCatalog(catalog As %DynamicArray, focus As %String) As %DynamicArray
+{
+    Set words = ..Words(focus)
+    Quit:words="" catalog
+    // glossary terms mentioned in the focus -> the tables their definitions reference
+    Set rs = ##class(%SQL.Statement).%ExecDirect(, "SELECT Term, Definition FROM Copilot_Data.Glossary WHERE Active = 1")
+    While rs.%Next() {
+        Set termWords = ..Words(rs.%Get("Term")), hit = 0
+        For i=1:1:$ListLength(termWords) {
+            If $ListFind(words, $List(termWords, i)) {
+                Set hit = 1
+                Quit
+            }
+        }
+        Set:hit glossaryText = $Get(glossaryText)_" "_$ZConvert(rs.%Get("Definition"), "U")
+    }
+    Set n = catalog.%Size()
+    For i=0:1:n-1 {
+        Set t = catalog.%Get(i), name = $ZConvert(t.name, "L"), text = ""
+        Set cols = t.columns.%GetIterator()
+        While cols.%GetNext(, .col) {
+            Set text = text_" "_col.name_" "_col.description
+        }
+        Set text = $ZConvert(text_" "_t.description, "L"), sc = 0
+        For w=1:1:$ListLength(words) {
+            Set word = $List(words, w)
+            Set:name[word sc = sc + 2
+            Set:text[word sc = sc + 1
+        }
+        Set:$Find($Get(glossaryText), $ZConvert(t.fullName, "U")) sc = sc + 3
+        Set score(i) = sc, index($ZConvert(t.fullName, "U")) = i
+    }
+    // JOIN partners of relevant tables
+    For i=0:1:n-1 {
+        Continue:score(i)<=0
+        Set cols = catalog.%Get(i).columns.%GetIterator()
+        While cols.%GetNext(, .col) {
+            Set ref = col.%Get("ref")
+            Continue:ref=""
+            Set target = $ZConvert($Piece(ref, ".", 1, $Length(ref, ".") - 1), "U")
+            Set:$Data(index(target), j) bonus(j) = 1
+        }
+    }
+    For i=0:1:n-1 {
+        Set total = score(i) + $Get(bonus(i))
+        Set order(-total, i) = ""
+    }
+    Set out = [], k = ""
+    For {
+        Set k = $Order(order(k))
+        Quit:k=""
+        Set i = ""
+        For {
+            Set i = $Order(order(k, i))
+            Quit:i=""
+            Do out.%Push(catalog.%Get(i))
+        }
+    }
+    Quit out
+}
+
+/// Significant lowercase words (accents removed, 4+ letters, simple plural folding, no stop words).
+ClassMethod Words(text As %String) As %List
+{
+    Set t = $ZConvert($Translate(text, "áàâãäéèêëíìîïóòôõöúùûüçÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇ", "aaaaaeeeeiiiiooooouuuucAAAAAEEEEIIIIOOOOOUUUUC"), "L")
+    Set t = $Translate(t, ".,;:!?()[]{}""'/\-_=<>*+|%#@$&0123456789", "                                        ")
+    Set stop = ",what,which,with,from,over,last,this,that,than,each,have,were,does,show,list,give,many,much,most,more,less,month,months,year,years,week,days,today,quais,qual,quanto,quantos,quantas,para,pelo,pela,pelos,pelas,mais,menos,meses,ultimo,ultimos,ultima,ultimas,este,esta,esse,essa,entre,como,sobre,cada,todos,todas,dias,semana,hoje,select,where,group,order,join,count,round,cast,date,null,case,when,then,else,exact,"
+    Set out = ""
+    For i=1:1:$Length(t, " ") {
+        Set w = $Piece(t, " ", i)
+        Continue:$Length(w)<4
+        Continue:stop[(","_w_",")
+        Set:($Length(w)>4)&&($Extract(w, *)="s") w = $Extract(w, 1, *-1)
+        Set:'$ListFind(out, w) out = out_$ListBuild(w)
     }
     Quit out
 }

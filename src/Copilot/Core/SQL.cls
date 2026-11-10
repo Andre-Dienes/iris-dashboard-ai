@@ -148,11 +148,28 @@ ClassMethod Summary(result As %DynamicObject) As %DynamicObject
 {
     Set cols = [], stats = {}
     Set minRows = +##class(Copilot.Core.Config).Get("PRIVACY_MIN_ROWS", 10)
-    Set n = result.columns.%Size()
-    Set:result.rowCount<minRows n = 0
-    For c=0:1:n-1 {
+    Set:result.rowCount>=minRows stats = ..NumericStats(result, cols)
+    If result.rowCount<minRows {
+        // still describe the columns, without any statistic
+        Set iter = result.columns.%GetIterator()
+        While iter.%GetNext(, .col) {
+            Do cols.%Push({"name": (col.name), "type": (col.type)})
+        }
+        Quit {"columns": (cols), "rowCount": (result.rowCount), "truncated": (result.truncated), "numericStats": {}, "note": ("Privacy mode: fewer than "_minRows_" rows, so no statistics are shared with the AI (re-identification risk).")}
+    }
+    Quit {"columns": (cols), "rowCount": (result.rowCount), "truncated": (result.truncated), "numericStats": (stats), "note": "Privacy mode: individual rows and text values are not shared with the AI."}
+}
+
+/// Min/max/avg/sum/count of each numeric column over ALL rows of a result, computed by IRIS so the
+/// LLM never has to add numbers itself. Optionally fills cols with [{name, type}].
+ClassMethod NumericStats(result As %DynamicObject, ByRef cols As %DynamicArray = "") As %DynamicObject
+{
+    Set stats = {}
+    Quit:'$IsObject(result) stats
+    Quit:'$IsObject(result.%Get("columns")) stats
+    For c=0:1:result.columns.%Size()-1 {
         Set col = result.columns.%Get(c)
-        Do cols.%Push({"name": (col.name), "type": (col.type)})
+        Do:$IsObject(cols) cols.%Push({"name": (col.name), "type": (col.type)})
         Continue:col.type'="number"
         Set min = "", max = "", sum = 0, count = 0
         Set iter = result.rows.%GetIterator()
@@ -166,15 +183,7 @@ ClassMethod Summary(result As %DynamicObject) As %DynamicObject
         Continue:'count
         Do stats.%Set(col.name, {"min": (min), "max": (max), "avg": ($Normalize(sum / count, 4)), "sum": ($Normalize(sum, 4)), "count": (count)})
     }
-    If result.rowCount<minRows {
-        // still describe the columns, without any statistic
-        Set iter = result.columns.%GetIterator()
-        While iter.%GetNext(, .col) {
-            Do cols.%Push({"name": (col.name), "type": (col.type)})
-        }
-        Quit {"columns": (cols), "rowCount": (result.rowCount), "truncated": (result.truncated), "numericStats": {}, "note": ("Privacy mode: fewer than "_minRows_" rows, so no statistics are shared with the AI (re-identification risk).")}
-    }
-    Quit {"columns": (cols), "rowCount": (result.rowCount), "truncated": (result.truncated), "numericStats": (stats), "note": "Privacy mode: individual rows and text values are not shared with the AI."}
+    Quit stats
 }
 
 /// Runs a query and returns the rows as Markdown (used by the agent tools).

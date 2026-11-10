@@ -96,7 +96,7 @@ ClassMethod ConverseJSON(message As %String, sessionId As %String = "", schemas 
     Set prompt = scope_##class(Copilot.Core.Config).LanguageRule()_$Char(10,10)_message
     If sessionId="" {
         // new conversation: hand over the whole catalog at once (fewer tool round-trips and fewer mapping mistakes)
-        Set prompt = scope_"Available data catalog:"_$Char(10)_##class(Copilot.Core.Schema).SchemaText(schemas)_$Char(10,10)_##class(Copilot.Core.Config).LanguageRule()_$Char(10,10)_"User question: "_message
+        Set prompt = scope_"Available data catalog:"_$Char(10)_##class(Copilot.Core.Schema).SchemaText(schemas, 1, 1, message)_$Char(10,10)_##class(Copilot.Core.Config).LanguageRule()_$Char(10,10)_"User question: "_message
     }
     If ##class(Copilot.Core.Config).PrivacyMode() {
         Set prompt = prompt_$Char(10,10)_"PRIVACY MODE IS ON: RunQuery only tells you whether a query works, its columns and its row count; the values stay in IRIS and are shown to the user in the portal. "_

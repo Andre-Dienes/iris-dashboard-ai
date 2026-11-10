@@ -66,7 +66,7 @@ ClassMethod AskSystemPrompt(schemaText As %String) As %String
 ClassMethod Ask(question As %String, schemas As %String = "", history As %DynamicArray = "") As %DynamicObject
 {
     Set start = $ZHorolog
-    Set schemaText = ##class(Copilot.Core.Schema).SchemaText(schemas)
+    Set schemaText = ##class(Copilot.Core.Schema).SchemaText(schemas, 1, 1, question)
     Set messages = [{"role": "system", "content": (..AskSystemPrompt(schemaText))}]
     If $IsObject(history) {
         Set from = $Select(history.%Size() > 8: history.%Size() - 8, 1:0)
@@ -162,8 +162,10 @@ ClassMethod GenerateStep(question As %String, catalog As %String, history As %St
 ClassMethod ExplainSQL(sql As %String, schemas As %String = "") As %DynamicObject
 {
     Set system = "You explain InterSystems IRIS SQL queries to business users. "_
-        "Use short markdown: a one-sentence summary, then bullets with the tables used, JOINs, filters, groupings and what each result column means. No unnecessary jargon."_$Char(10)_##class(Copilot.Core.Config).LanguageRule()
-    Set user = "Catalog:"_$Char(10)_##class(Copilot.Core.Schema).SchemaText(schemas, 0)_$Char(10,10)_"Query:"_$Char(10)_sql
+        "Use short markdown: a one-sentence summary, then bullets with the tables used, JOINs, filters, groupings and what each result column means. No unnecessary jargon. "_
+        "Describe ONLY what the query text actually does: never assume filters, exclusions or rules that are not written in it. "_
+        "If the business glossary defines a rule the query does not apply (e.g. excluding cancelled orders), state that it is NOT applied."_$Char(10)_##class(Copilot.Core.Config).LanguageRule()
+    Set user = "Catalog:"_$Char(10)_##class(Copilot.Core.Schema).SchemaText(schemas, 0, 1, sql)_$Char(10,10)_"Query:"_$Char(10)_sql
     Quit {"text": (##class(Copilot.Core.LLM).Complete(system, user, 0, "explain"))}
 }
 
@@ -173,7 +175,7 @@ ClassMethod FixSQL(sql As %String, error As %String = "", schemas As %String = "
     Set nl = $Char(10)
     Set system = "You fix and refine InterSystems IRIS SQL queries."_nl_nl_..DialectRules()_nl_nl_
         "Reply ONLY with JSON: {""sql"": ""corrected query"", ""explanation"": ""what changed and why""}"_nl_nl_
-        "Catalog:"_nl_##class(Copilot.Core.Schema).SchemaText(schemas)_nl_nl_##class(Copilot.Core.Config).LanguageRule()
+        "Catalog:"_nl_##class(Copilot.Core.Schema).SchemaText(schemas, 1, 1, sql_" "_instruction)_nl_nl_##class(Copilot.Core.Config).LanguageRule()
     Set user = "Query:"_nl_sql
     Set:error'="" user = user_nl_nl_"Error returned by IRIS:"_nl_error
     Set:instruction'="" user = user_nl_nl_"Change requested by the user:"_nl_instruction
@@ -223,6 +225,10 @@ ClassMethod Insight(question As %String, sql As %String, data As %DynamicObject)
         }
     }
     Set payload = {"columns": ($Select($IsObject(data):data.%Get("columns"), 1:[])), "rows": (rows), "totalRows": ($Select($IsObject(data):data.%Get("rowCount"), 1:0))}
+    // totals/averages are computed by IRIS over all rows: the model must quote them instead of doing arithmetic
+    Do payload.%Set("numericStatsComputedByIRIS", ##class(Copilot.Core.SQL).NumericStats(data))
+    Set system = system_nl_"For any total, sum, average, minimum or maximum over the whole result, quote numericStatsComputedByIRIS exactly; "_
+        "never add up or average the rows yourself. Shares (%) may be derived only for a single row, as value / sum; never add several rows or shares together."
     Set user = "Original question: "_question_nl_"SQL: "_sql_nl_"Result (JSON, up to 80 rows):"_nl_payload.%ToJSON()
     Quit {"text": (##class(Copilot.Core.LLM).Complete(system, user, 0.2, "insight"))}
 }
@@ -240,7 +246,7 @@ ClassMethod GenerateDashboard(prompt As %String, schemas As %String = "") As %Dy
         "]}"_nl_
         "Create 5 to 8 widgets: start with 2 to 4 KPIs (queries returning one row and one number, width 1), then charts (width 2) and at most one table (width 4). "_
         "Widths refer to a 4-column grid. Chart queries should return at most ~30 rows (use TOP)."_nl_nl_
-        "Catalog:"_nl_##class(Copilot.Core.Schema).SchemaText(schemas)_nl_nl_##class(Copilot.Core.Config).LanguageRule()
+        "Catalog:"_nl_##class(Copilot.Core.Schema).SchemaText(schemas, 1, 1, prompt)_nl_nl_##class(Copilot.Core.Config).LanguageRule()
     Set text = ##class(Copilot.Core.LLM).Complete(system, prompt, 0.2, "dashboard")
     Set spec = ##class(Copilot.Core.LLM).ParseJSON(text)
     Set widgets = []
