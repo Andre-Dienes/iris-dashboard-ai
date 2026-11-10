@@ -95,6 +95,10 @@ ClassMethod Catalog(schemas As %String = "") As %DynamicArray
         Continue:(table.type'="table")||(table.className="")
         Do ..AddReferences(table)
     }
+    // optional catalog plugin (CATALOG_HOOK = class name): may enrich descriptions/relationships,
+    // e.g. for tables that come from other systems
+    Set hook = ##class(Copilot.Core.Config).Get("CATALOG_HOOK")
+    Do:hook'="" $ClassMethod(hook, "EnrichCatalog", out)
     Quit out
 }
 
@@ -180,7 +184,12 @@ ClassMethod SchemaText(schemas As %String = "", withSamples As %Boolean = 1, wit
         Set prev = $Select(month=1:12, 1:month - 1), prevYear = $Select(month=1:year - 1, 1:year)
         Set out = "TODAY (IRIS server date): "_$ZDate(today, 3)_". Current month: "_$List(months, month)_" "_year_
             ". Previous month: "_$List(months, prev)_" "_prevYear_". Use these dates when explaining periods; never assume another year."_nl_nl
-        Set glossary = ##class(Copilot.Data.Glossary).PromptText()
+        // only the glossary terms of the schemas in this catalog
+        Set inScope = "", iterS = catalog.%GetIterator()
+        While iterS.%GetNext(, .tbl) {
+            Set:'$ListFind(inScope, $ZConvert(tbl.schema, "U")) inScope = inScope_$ListBuild($ZConvert(tbl.schema, "U"))
+        }
+        Set glossary = ##class(Copilot.Data.Glossary).PromptText($Select(inScope'="":inScope, 1:$ListBuild("")))
         Set:glossary'="" out = out_glossary_nl
     }
     Set iter = catalog.%GetIterator()
@@ -194,7 +203,7 @@ ClassMethod SchemaText(schemas As %String = "", withSamples As %Boolean = 1, wit
             Set:col.pk line = line_" PK"
             Set:col.%Get("ref")'="" line = line_" -> "_col.ref
             Set:col.description'="" line = line_"  -- "_col.description
-            If withSamples, ($Length(out) < (max * 0.7)), (col.type["CHAR") {
+            If withSamples, '..SkipSamples(table.fullName), ($Length(out) < (max * 0.7)), (col.type["CHAR") {
                 Set samples = ..SampleValues(table.fullName, col.name)
                 Set:samples'="" line = line_"  [values: "_samples_"]"
             }
@@ -207,6 +216,14 @@ ClassMethod SchemaText(schemas As %String = "", withSamples As %Boolean = 1, wit
         Set out = out_block
     }
     Quit out
+}
+
+/// The catalog plugin (CATALOG_HOOK) may skip sample values for some tables (e.g. slow remote tables).
+ClassMethod SkipSamples(table As %String) As %Boolean
+{
+    Set hook = ##class(Copilot.Core.Config).Get("CATALOG_HOOK")
+    Quit:hook="" 0
+    Quit +$ClassMethod(hook, "SkipSamples", table)
 }
 
 /// Distinct values of low-cardinality columns (up to 12), cached.

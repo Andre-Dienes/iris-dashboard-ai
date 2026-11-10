@@ -18,12 +18,34 @@ Property UpdatedBy As %String(MAXLEN = 128) [ InitialExpression = {$Username} ];
 Property UpdatedAt As %TimeStamp [ InitialExpression = {$ZDateTime($Horolog, 3)} ];
 
 /// Text for the prompt ("" when there are no active terms).
-ClassMethod PromptText() As %String
+/// inScope: $List of the (uppercase) schemas in the current catalog. A term whose definition references
+/// tables of visible schemas (e.g. "Sales.SalesOrder") is only included when one of those schemas is in
+/// scope, so the definitions of one data source never leak into questions about another one.
+/// Terms without any schema reference always apply.
+ClassMethod PromptText(inScope As %List = "") As %String
 {
     Set out = "", nl = $Char(10)
+    Set visible = ""
+    If inScope'="" {
+        Set iter = ##class(Copilot.Core.Schema).ListSchemas().%GetIterator()
+        While iter.%GetNext(, .s) {
+            Set visible = visible_$ListBuild($ZConvert(s.schema, "U"))
+        }
+    }
     Set rs = ##class(%SQL.Statement).%ExecDirect(, "SELECT Term, Definition FROM Copilot_Data.Glossary WHERE Active = 1 ORDER BY ID")
     While rs.%Next() {
-        Set out = out_"- "_rs.%Get("Term")_": "_rs.%Get("Definition")_nl
+        Set def = rs.%Get("Definition")
+        If inScope'="" {
+            Set defU = $ZConvert(def, "U"), referenced = 0, matches = 0
+            For i=1:1:$ListLength(visible) {
+                Set schema = $List(visible, i)
+                Continue:'$Find(defU, schema_".")
+                Set referenced = 1
+                Set:$ListFind(inScope, schema) matches = 1
+            }
+            Continue:referenced&&'matches
+        }
+        Set out = out_"- "_rs.%Get("Term")_": "_def_nl
     }
     Quit:out="" ""
     Quit "BUSINESS GLOSSARY (official company definitions - MANDATORY, they take precedence over any assumption of yours):"_nl_out

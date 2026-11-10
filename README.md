@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-horizontal-dark.svg">
+    <img src="assets/logo-horizontal.svg" alt="IRIS Data Copilot" width="480">
+  </picture>
+</p>
+
 # IRIS Data Copilot
 
 **Ask your InterSystems IRIS data questions in plain English (or Portuguese) - no SQL required.**
@@ -161,19 +168,21 @@ The `%AI.*` classes only exist in the AI Hub Early Access builds.
 
 1. Open the [Early Access Program portal](https://evaluation.intersystems.com/Eval/early-access/AIHub) and choose the
    **AI Hub** program.
-2. Download the container image for your platform (x64 or ARM64) and, if provided, the license key file
-   (e.g. `iris-container-x64.key`).
+2. Download the **Community** AI Hub container image for your platform (x64 or ARM64). Validated build:
+   `irishealth-community-2026.3.0AI.136.0-docker.tar.gz` (no license key needed). Non-Community builds also work
+   with the license key file provided by the program (e.g. `iris-container-x64.key`).
 3. Load the image into Docker and note the tag it prints:
 
 ```bash
-docker load -i iris-community-2027.1.0AI.109.0-docker.tar.gz
+docker load -i irishealth-community-2026.3.0AI.136.0-docker.tar.gz
 ```
 
-Output example: `Loaded image: intersystems/iris-community:2027.1.0AI.109.0`.
+Output example: `Loaded image: docker.iscinternal.com/docker-intersystems/intersystems/irishealth-community:2026.3.0AI.136.0`.
 
-### 3. Add the license key (if you received one)
+### 3. Add the license key (non-Community images only)
 
-Copy the key file into the `keys/` folder of the project:
+Community images need no key: skip this step. For a non-Community AI Hub image, copy the key file into the
+`keys/` folder of the project:
 
 ```bash
 cp /path/to/iris-container-x64.key keys/
@@ -470,7 +479,7 @@ Change them at run time with `do ##class(Copilot.Core.Config).Set("KEY", "value"
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `IRIS_IMAGE` | `intersystems/iris-community:2027.1.0AI.109.0` | AI Hub image tag (build time). |
+| `IRIS_IMAGE` | `docker.iscinternal.com/docker-intersystems/intersystems/irishealth-community:2026.3.0AI.136.0` | AI Hub image tag (build time). |
 | `COPILOT_DEMO` | `1` | `1` builds the demo dataset; `0` installs empty (build time). |
 | `LLM_PROVIDER` | `openai` | AI Hub provider name (`openai`, `anthropic`, ...). |
 | `LLM_MODEL` | `gpt-4o-mini` | Model for SQL generation, explanations, insights and dashboards. |
@@ -486,6 +495,7 @@ Change them at run time with `do ##class(Copilot.Core.Config).Set("KEY", "value"
 | `VIEW_SCHEMA` | `Analytics` | Schema where the portal creates views. |
 | `MAX_ROWS` | `1000` | Maximum rows returned per query. |
 | `MAX_SCHEMA_CHARS` | `40000` | Maximum size of the catalog context sent to the LLM. |
+| `CATALOG_HOOK` | | Optional class that enriches the AI catalog (`EnrichCatalog(catalog)`, `SkipSamples(table)`), e.g. descriptions and relationships for tables that come from other systems. |
 | `SIMULATOR_INTERVAL` | `5` | Seconds between simulated orders (demo only; `0` disables it). |
 | `WEB_PORT` / `IRIS_PORT` / `IRIS_WEB_PORT` | `8080` / `1972` / `52773` | Host ports (portal, superserver, Management Portal through the Web Gateway). |
 | `WEBGATEWAY_IMAGE` | `containers.intersystems.com/intersystems/webgateway:2026.1` | Web Gateway image (public InterSystems registry). |
@@ -589,8 +599,8 @@ package; for the portal, run `docker compose up -d --build web`.
 | Build | Result |
 | --- | --- |
 | `iris:2027.1.0AI.108.0` + license key | Validated end to end: interoperability production (Ask and Report workflows, auto-start, message trace), portal, NL→SQL with self-correction, AI Analyst (`%AI.Agent`), scheduled AI reports and alerts, dashboard generation, views, live dashboard, privacy mode, EN and PT-BR. |
-| `irishealth-community:2026.3.0AI.136.0` | Works without a key, including the portal. |
-| `iris-community:2027.1.0AI.109.0` | Build named in the AI Hub program instructions (same setup, key in `keys/`); not yet tested here. |
+| `irishealth-community:2026.3.0AI.136.0` (**default**, Community) | Validated end to end without a license key: interoperability production, portal, AI Hub agents, scheduled reports, Management Portal through the Web Gateway. |
+| `iris-community:2026.1` (GA) | **Not supported**: it does not include AI Hub (`%AI.*` classes). |
 
 ## License
 

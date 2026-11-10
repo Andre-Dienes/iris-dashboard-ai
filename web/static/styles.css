@@ -60,7 +60,8 @@ label { display: flex; flex-direction: column; gap: 4px; font-weight: 500; }
 .brand b { display: block; font-size: 15px; }
 .brand small { display: block; font-size: 12px; opacity: .7; }
 .brand.big b { font-size: 19px; }
-.logo { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 9px; background: linear-gradient(135deg, var(--primary), var(--accent)); color: #fff; font-size: 10px; letter-spacing: -2px; }
+.logo { display: block; width: 36px; height: 36px; flex: none; }
+.brand.big .logo { width: 44px; height: 44px; }
 
 /* layout */
 .app { display: grid; grid-template-columns: 232px 1fr; height: 100vh; }

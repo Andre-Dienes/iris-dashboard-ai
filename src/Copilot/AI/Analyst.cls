@@ -29,6 +29,13 @@ You are a data analyst who helps business users understand the data stored in In
 6. Prefer ONE final query that returns everything ready (names, values and the calculation, e.g. growth %)
    instead of computing by hand from several queries.
 
+## Mandatory rule: never answer from the wrong source
+Every message states the data sources (schemas) in scope. If the question refers to a system, application or
+dataset (e.g. "helpdesk", "CRM", "telephony") that is not in those sources, do NOT answer with data from another
+source, even if it looks similar. Reply briefly that this data is not in the selected sources and tell the user
+which schema to select in the **Sources** selector at the top of the portal (you may call ListSchemas to find its
+name, but never mention tool names to the user). State in your answer which tables you used.
+
 ## Mandatory rule: names, not codes
 The user is a business person and does not know codes. Every entity (branch, salesperson, customer, product,
 category...) must appear by NAME, obtained by joining its master-data table (e.g. `JOIN Core.Branch b ON b.BranchID = o.BranchID`
@@ -39,7 +46,9 @@ and `%EXACT(b.Name) AS Branch`). Never show a column with IDs only.
 - Do not narrate what you are going to do ("I will calculate...", "let's see...") and do not use LaTeX formulas: deliver the result.
 - Start with the answer in one sentence, then a short table (at most 10 rows; highlight the key one) and a practical conclusion.
 - Format numbers according to the language rule (en-US: $1,234,567.89 and 12.3%; pt-BR: US$ 1.234.567,89 e 12,3%).
-- Never invent numbers: use only what the tools returned.
+- Never invent numbers: use only what the tools returned **in this turn**. Never repeat numbers or SQL from
+  previous answers of the conversation: run the queries again with RunQuery (earlier answers may have used the
+  wrong source or old data).
 - At the end, show the main SQL query used in a ```sql block.
 }
 
@@ -69,6 +78,12 @@ ClassMethod ConverseJSON(message As %String, sessionId As %String = "", schemas 
     Set start = $ZHorolog
     Set agent = ..%New()
     Set session = ""
+    // a conversation is bound to the sources it started with: different sources (or an old conversation
+    // without a recorded scope) start a new conversation with the right catalog
+    Set scopeKey = $ZConvert(schemas, "U")
+    If (sessionId'="") && ($Get(^Copilot.AgentScope(sessionId), $Char(0))'=scopeKey) {
+        Set sessionId = ""
+    }
     Set:sessionId'="" session = ##class(%AI.Agent.Session).%OpenId(sessionId)
     If $IsObject(session) {
         $$$ThrowOnError(agent.%InitWithSession(session))
@@ -76,10 +91,12 @@ ClassMethod ConverseJSON(message As %String, sessionId As %String = "", schemas 
         $$$ThrowOnError(agent.%Init())
         Set session = agent.CreateSession()
     }
-    Set prompt = ##class(Copilot.Core.Config).LanguageRule()_$Char(10,10)_message
+    // the sources in scope are restated on every turn (the user may change them during the conversation)
+    Set scope = "DATA SOURCES IN SCOPE: "_$Select(schemas'="":schemas, 1:"all visible schemas")_$Char(10)
+    Set prompt = scope_##class(Copilot.Core.Config).LanguageRule()_$Char(10,10)_message
     If sessionId="" {
         // new conversation: hand over the whole catalog at once (fewer tool round-trips and fewer mapping mistakes)
-        Set prompt = "Available data catalog:"_$Char(10)_##class(Copilot.Core.Schema).SchemaText(schemas)_$Char(10,10)_##class(Copilot.Core.Config).LanguageRule()_$Char(10,10)_"User question: "_message
+        Set prompt = scope_"Available data catalog:"_$Char(10)_##class(Copilot.Core.Schema).SchemaText(schemas)_$Char(10,10)_##class(Copilot.Core.Config).LanguageRule()_$Char(10,10)_"User question: "_message
     }
     If ##class(Copilot.Core.Config).PrivacyMode() {
         Set prompt = prompt_$Char(10,10)_"PRIVACY MODE IS ON: RunQuery only tells you whether a query works, its columns and its row count; the values stay in IRIS and are shown to the user in the portal. "_
@@ -87,6 +104,7 @@ ClassMethod ConverseJSON(message As %String, sessionId As %String = "", schemas 
     }
     Set response = agent.Chat(session, prompt)
     Do session.%Save()
+    Set ^Copilot.AgentScope(session.%Id()) = scopeKey
     Set elapsed = ($ZHorolog - start) * 1000 \ 1
     Do ##class(Copilot.Core.LLM).Log("agent", agent.Model, elapsed, response.Usage)
     Set sqls = []

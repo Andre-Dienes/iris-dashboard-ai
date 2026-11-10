@@ -6,7 +6,7 @@ services:
       context: .
       dockerfile: iris/Dockerfile
       args:
-        IMAGE: ${IRIS_IMAGE:-intersystems/iris-community:2027.1.0AI.109.0}
+        IMAGE: ${IRIS_IMAGE:-docker.iscinternal.com/docker-intersystems/intersystems/irishealth-community:2026.3.0AI.136.0}
         COPILOT_DEMO: ${COPILOT_DEMO:-1}
     image: iris-data-copilot-iris:latest
     container_name: copilot-iris

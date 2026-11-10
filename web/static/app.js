@@ -255,6 +255,7 @@ function resultCard(item) {
     if (item.result) meta.append(h('span', { class: 'pill good' }, t('res.rows', { n: nf.format(item.result.rowCount) }) + (item.result.truncated ? t('res.limited') : '')), h('span', { class: 'pill' }, `SQL ${item.result.elapsedMs} ms`));
     if (item.elapsedMs) meta.append(h('span', { class: 'pill' }, t('res.ai', { s: nf.format(+(item.elapsedMs / 1000).toFixed(1)) })));
     if (item.attempts > 1) meta.append(h('span', { class: 'pill warn', title: t('res.autofixedTip') }, t('res.autofixed', { n: item.attempts })));
+    if (item.autoSources) meta.append(h('span', { class: 'pill', title: t('res.autoTip') }, t('res.auto', { s: item.autoSources.split(',').map((x) => x.split('_').slice(-2).join('_')).join(', ') })));
     if (item.interop?.sessionId) meta.append(h('span', { class: 'pill link', title: t('res.interopTip'), onclick: () => openTrace(item.interop.sessionId) }, t('res.interop', { n: item.interop.sessionId })));
     card.append(meta);
     if (item.explanation) card.append(h('div', { class: 'explain md', html: md(item.explanation) }));
@@ -372,7 +373,7 @@ async function ask(question) {
       const r = await api('agent', { message: question, sessionId: state.agentSession, schemas: schemasParam() });
       state.agentSession = r.sessionId || state.agentSession;
       wait.remove();
-      const card = h('div', { class: 'card' }, h('div', { class: 'md', html: md(r.text) }));
+      const card = h('div', { class: 'card' }, r.autoSources ? h('div', { class: 'meta' }, h('span', { class: 'pill', title: t('res.autoTip') }, t('res.auto', { s: r.autoSources.split(',').map((x) => x.split('_').slice(-2).join('_')).join(', ') }))) : null, h('div', { class: 'md', html: md(r.text) }));
       // the agent may write its final query in a ```sql block without running it through the tool
       if (!r.sqls?.length) {
         const blocks = [...String(r.text || '').matchAll(/```sql\s*([\s\S]*?)```/gi)].map((m) => m[1].trim()).filter(Boolean);
@@ -912,6 +913,10 @@ function renderSources() {
 }
 function saveSources() {
   for (const s of [...state.selected]) if (!state.schemas.some((x) => x.schema === s)) state.selected.delete(s);
+  // the AI Analyst receives the catalog when a conversation starts: new sources = new conversation
+  const key = [...state.selected].sort().join(',');
+  if (state.sourcesKey !== undefined && state.sourcesKey !== key) { state.agentSession = ''; state.history = []; }
+  state.sourcesKey = key;
   localStorage.setItem('copilot.schemas', JSON.stringify([...state.selected]));
   renderSources();
 }

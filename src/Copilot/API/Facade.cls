@@ -15,13 +15,121 @@ ClassMethod Dispatch(action As %String, payload As %String = "{}") As %String
 {
     Try {
         Do ##class(Copilot.Core.Config).SetLang($Select(payload["""lang"":""pt""":"pt", payload["""lang"":""en""":"en", 1:""))
-        If ..#AIACTIONS[(","_action_",") {
+        // deterministic guard: the question names a system whose schemas are not among the selected sources
+        Set guard = ""
+        Set auto = ""
+        If (action="ask") || (action="agent") {
+            Set p = ##class(%DynamicObject).%FromJSON($Select(payload="":"{}", 1:payload))
+            Set question = $Select(action="ask":p.%Get("question"), 1:p.%Get("message"))
+            Set selected = ..SchemaList(p.%Get("schemas"))
+            Set guard = ..SourceGuard(question, selected)
+            // "all sources" + the question names a system: focus the context on that system's schemas
+            // (a large catalog would be truncated and the system's tables could be left out)
+            If (guard="") && (selected="") {
+                Set auto = ..SourceFocus(question)
+                If auto'="" {
+                    Set list = []
+                    For i=1:1:$Length(auto, ",") {
+                        Do list.%Push($Piece(auto, ",", i))
+                    }
+                    Do p.%Set("schemas", list)
+                    Set payload = p.%ToJSON()
+                }
+            }
+        }
+        If guard'="" {
+            Set out = $Select(action="ask":{"type": "message", "message": (guard), "suggestions": [], "attempts": 0}, 1:{"text": (guard), "sessionId": "", "sqls": []}).%ToJSON()
+        } ElseIf ..#AIACTIONS[(","_action_",") {
             Set out = ##class(Copilot.Core.Isolate).Call($ClassName(), "Run", 600, action, payload)
+            If auto'="" {
+                Set obj = ##class(%DynamicObject).%FromJSON(out)
+                Do obj.%Set("autoSources", auto)
+                Set out = obj.%ToJSON()
+            }
         } Else {
             Set out = ..Run(action, payload)
         }
     } Catch ex {
         Set out = {"error": (..Message(ex))}.%ToJSON()
+    }
+    Quit out
+}
+
+/// "" when the question can be answered with the selected sources; otherwise a message telling the user
+/// which schema to select. A question "names a system" when it contains a distinctive word of a visible
+/// schema name (e.g. "helpdesk" in app_helpdesk_db) that no selected schema contains.
+ClassMethod SourceGuard(question As %String, selected As %String) As %String
+{
+    Quit:selected="" ""
+    Set q = $ZConvert($Translate(question, "áàâãäéèêëíìîïóòôõöúùûüçÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇ", "aaaaaeeeeiiiiooooouuuucAAAAAEEEEIIIIOOOOOUUUUC"), "L")
+    Set sel = ##class(Copilot.Core.Schema).SchemaFilter(selected)
+    Set all = ##class(Copilot.Core.Schema).ListSchemas(), n = all.%Size()
+    // words of each schema name; words used by many schemas (common prefixes like "app", "company") or
+    // technical suffixes are not distinctive
+    Set iter = all.%GetIterator()
+    While iter.%GetNext(, .s) {
+        Set name = s.schema
+        For i=1:1:$Length(name, "_") {
+            Set w = $ZConvert($Piece(name, "_", i), "L")
+            Continue:$Length(w)<4
+            Set words(w, name) = ""
+            Set:'$Data(seen(w, name)) count(w) = $Get(count(w)) + 1, seen(w, name) = ""
+        }
+    }
+    Set w = ""
+    For {
+        Set w = $Order(words(w))
+        Quit:w=""
+        Set maxShare = (n \ 3) + 1
+        Continue:count(w)>maxShare
+        Continue:",core,sales,data,process,service,"[(","_w_",")
+        Continue:'$Find(" "_$Translate(q, ".,;:!?()[]{}""'/\-_", "                   ")_" ", " "_w_" ")
+        // is the word covered by a selected schema?
+        Set covered = 0, name = "", outside = ""
+        For {
+            Set name = $Order(words(w, name))
+            Quit:name=""
+            If $ListFind(sel, $ZConvert(name, "U")) {
+                Set covered = 1
+            } Else {
+                Set outside = outside_$Select(outside="":"", 1:", ")_name
+            }
+        }
+        Continue:covered
+        Quit:outside'=""
+    }
+    Quit:$Get(outside)="" ""
+    Quit ##class(Copilot.Core.Config).T("A pergunta cita """_w_""", mas esses dados estão fora das fontes selecionadas. Selecione "_outside_" em **Fontes** (no topo do portal) e pergunte de novo.",
+        "The question mentions """_w_""", but that data is outside the selected sources. Select "_outside_" in **Sources** (top of the portal) and ask again.")
+}
+
+/// Schemas whose distinctive name word (e.g. "helpdesk", "crm") appears in the question, comma separated.
+ClassMethod SourceFocus(question As %String) As %String
+{
+    Set q = " "_$Translate($ZConvert($Translate(question, "áàâãäéèêëíìîïóòôõöúùûüçÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇ", "aaaaaeeeeiiiiooooouuuucAAAAAEEEEIIIIOOOOOUUUUC"), "L"), ".,;:!?()[]{}""'/-_", "                  ")_" "
+    Set all = ##class(Copilot.Core.Schema).ListSchemas(), n = all.%Size()
+    Set iter = all.%GetIterator()
+    While iter.%GetNext(, .s) {
+        For i=1:1:$Length(s.schema, "_") {
+            Set w = $ZConvert($Piece(s.schema, "_", i), "L")
+            Continue:$Length(w)<4
+            Set:'$Data(words(w, s.schema)) count(w) = $Get(count(w)) + 1
+            Set words(w, s.schema) = ""
+        }
+    }
+    Set maxShare = (n \ 3) + 1, out = "", w = ""
+    For {
+        Set w = $Order(words(w))
+        Quit:w=""
+        Continue:count(w)>maxShare
+        Continue:",core,sales,data,process,service,"[(","_w_",")
+        Continue:'$Find(q, " "_w_" ")
+        Set name = ""
+        For {
+            Set name = $Order(words(w, name))
+            Quit:name=""
+            Set:'$Find(","_out_",", ","_name_",") out = out_$Select(out="":"", 1:",")_name
+        }
     }
     Quit out
 }
