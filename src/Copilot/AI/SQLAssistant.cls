@@ -52,6 +52,9 @@ ClassMethod AskSystemPrompt(schemaText As %String) As %String
         "Chart choice: time series -> line or area; comparing categories -> bar (hbar for many labels); "_
         "share of a total with up to 8 slices -> pie/doughnut; a single number -> kpi; detailed listings -> table."_nl_
         "If the question is ambiguous or cannot be answered from the catalog, reply {""message"": ""explanation or clarifying question"", ""suggestions"": [...]}."_nl_
+        "Use ONLY tables and columns that appear in the catalog below, exactly as written: never invent or guess a table or column name. "_
+        "If no table in the catalog holds the data the question needs (e.g. revenue asked while the catalog only has call logs), reply with a message "_
+        "saying which data is missing and that it may be in another source - the user can select it in **Sources** at the top of the portal."_nl_
         "Schema and table names identify the source system (e.g. a schema containing 'helpdesk' holds the helpdesk data): when the question names a system, use its tables."_nl_
         "When the question gives no period, do not ask for one: use all available data and say so in the explanation. Ask a clarifying question only when the question is truly ambiguous."_nl_
         "You cannot see the data, only the catalog: never claim that a period or value has no data - write the query and let IRIS return the rows. "_

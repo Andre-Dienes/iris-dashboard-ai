@@ -14,7 +14,9 @@ Parameter AIACTIONS = ",ask,explain,fix,insight,agent,dashboards.generate,sugges
 ClassMethod Dispatch(action As %String, payload As %String = "{}") As %String
 {
     Try {
-        Do ##class(Copilot.Core.Config).SetLang($Select(payload["""lang"":""pt""":"pt", payload["""lang"":""en""":"en", 1:""))
+        Set lang = ""
+        Try { Set lang = ##class(%DynamicObject).%FromJSON($Select(payload="":"{}", 1:payload)).%Get("lang") } Catch {}
+        Do ##class(Copilot.Core.Config).SetLang(lang)
         // deterministic guard: the question names a system whose schemas are not among the selected sources
         Set guard = ""
         Set auto = ""
@@ -76,7 +78,7 @@ ClassMethod SourceGuard(question As %String, selected As %String) As %String
             Set:'$Data(seen(w, name)) count(w) = $Get(count(w)) + 1, seen(w, name) = ""
         }
     }
-    Set w = ""
+    Set w = "", result = ""
     For {
         Set w = $Order(words(w))
         Quit:w=""
@@ -96,11 +98,46 @@ ClassMethod SourceGuard(question As %String, selected As %String) As %String
             }
         }
         Continue:covered
-        Quit:outside'=""
+        If outside'="" Set result = outside Quit
     }
-    Quit:$Get(outside)="" ""
+    If result="" {
+        // business terms of the glossary (e.g. "faturamento") whose definition lives only in unselected schemas
+        Set result = ..GlossaryOutside(q, sel, all, .w)
+    }
+    Quit:result="" ""
+    Set outside = result
     Quit ##class(Copilot.Core.Config).T("A pergunta cita """_w_""", mas esses dados estão fora das fontes selecionadas. Selecione "_outside_" em **Fontes** (no topo do portal) e pergunte de novo.",
         "The question mentions """_w_""", but that data is outside the selected sources. Select "_outside_" in **Sources** (top of the portal) and ask again.")
+}
+
+/// Glossary terms mentioned in the (normalized, lowercase) question whose definitions only reference
+/// schemas outside the selection. Returns those schemas (comma separated) and the matched word in w.
+ClassMethod GlossaryOutside(q As %String, sel As %List, all As %DynamicArray, Output w As %String) As %String
+{
+    Set w = "", qs = " "_$Translate(q, ".,;:!?()[]{}""'/\-_", "                   ")_" "
+    Set iter = all.%GetIterator()
+    While iter.%GetNext(, .s) { Set visible($ZConvert(s.schema, "U")) = s.schema }
+    Set rs = ##class(%SQL.Statement).%ExecDirect(, "SELECT Term, Definition FROM Copilot_Data.Glossary WHERE Active = 1 ORDER BY ID")
+    While rs.%Next() {
+        Set defU = $ZConvert(rs.%Get("Definition"), "U"), schema = "", outside = "", covered = 0
+        For {
+            Set schema = $Order(visible(schema))
+            Quit:schema=""
+            Continue:'$Find(defU, schema_".")
+            If $ListFind(sel, schema) { Set covered = 1 } Else { Set outside = outside_$Select(outside="":"", 1:", ")_visible(schema) }
+        }
+        Continue:covered||(outside="")
+        // synonyms of the term: "Revenue / sales (faturamento, receita, vendas)"
+        Set term = $ZConvert($Translate(rs.%Get("Term"), "áàâãäéèêëíìîïóòôõöúùûüçÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇ", "aaaaaeeeeiiiiooooouuuucAAAAAEEEEIIIIOOOOOUUUUC"), "L")
+        Set term = $Translate(term, "/()", ",,,")
+        For i=1:1:$Length(term, ",") {
+            Set k = $ZStrip($Piece(term, ",", i), "<>W")
+            Continue:$Length(k)<4
+            If $Find(qs, " "_k_" ") Set w = k Quit
+        }
+        Quit:w'=""
+    }
+    Quit $Select(w="":"", 1:outside)
 }
 
 /// Schemas whose distinctive name word (e.g. "helpdesk", "crm") appears in the question, comma separated.
